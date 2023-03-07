@@ -1,0 +1,32 @@
+downloader:
+  starting_version: 0
+  polling_interval: 1s
+  ring:
+    heartbeat_period: 1s
+    heartbeat_timeout: 2s
+    instance_id: downloader_1
+  kvstore:
+    store: consul
+    consul:
+      host: "127.0.0.1:8500"
+      consistentreads: true
+    prefix: "charon/"
+  diffstore:
+    store: minio
+    minio:
+      endpoint: "localhost:9000"
+      minio_root_user: minioadmin
+      minio_root_password: minioadmin
+
+importer:
+  queue:
+    type: nats
+    nats:
+      url: "localhost:4222"
+  diffstore:
+    store: minio
+    minio:
+      endpoint: "localhost:9000"
+      minio_root_user: minioadmin
+      minio_root_password: minioadmin
+  

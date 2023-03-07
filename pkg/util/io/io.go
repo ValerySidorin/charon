@@ -1,4 +1,4 @@
-package diffstorage
+package io
 
 import (
 	"bytes"
