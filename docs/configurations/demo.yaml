@@ -1,6 +1,12 @@
 downloader:
   starting_version: 0
   polling_interval: 1s
+  fias_nalog: 
+    timeout: 30s
+    retry_max: 5
+  file_fetcher:
+    buffer_size: 4096
+    local_dir: D://downloader/downloader_1
   ring:
     heartbeat_period: 1s
     heartbeat_timeout: 2s

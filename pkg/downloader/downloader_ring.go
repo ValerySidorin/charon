@@ -14,6 +14,8 @@ type DownloaderRingConfig struct {
 	HeartbeatTimeout time.Duration `yaml:"heartbeat_timeout" category:"advanced"`
 
 	InstanceID string `yaml:"instance_id" doc:"default=<hostname>" category:"advanced"`
+
+	KVStore kv.Config `yaml:"kvstore"`
 }
 
 func (cfg *DownloaderRingConfig) ToBasicLifecyclerConfig(logger log.Logger) (ring.BasicLifecyclerConfig, error) {
@@ -27,11 +29,11 @@ func (cfg *DownloaderRingConfig) ToBasicLifecyclerConfig(logger log.Logger) (rin
 	}, nil
 }
 
-func (cfg *DownloaderRingConfig) toRingConfig(kvCfg kv.Config) ring.Config {
+func (cfg *DownloaderRingConfig) toRingConfig() ring.Config {
 	rc := ring.Config{}
 	flagext.DefaultValues(&rc)
 
-	rc.KVStore = kvCfg
+	rc.KVStore = cfg.KVStore
 	rc.HeartbeatTimeout = cfg.HeartbeatTimeout
 	rc.ReplicationFactor = 1
 

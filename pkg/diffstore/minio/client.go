@@ -83,7 +83,7 @@ func (c *MinioReader) Retrieve(ctx context.Context, objName string) (io.ReadClos
 	return obj, nil
 }
 
-func (c *MinioReader) RetrieveObjNamesByVersion(ctx context.Context, version int32) ([]string, error) {
+func (c *MinioReader) RetrieveObjNamesByVersion(ctx context.Context, version int) ([]string, error) {
 	var opts minio.ListObjectsOptions
 	opts.Set("x-minio-extract", "true")
 	opts.Recursive = true
@@ -97,12 +97,13 @@ func (c *MinioReader) RetrieveObjNamesByVersion(ctx context.Context, version int
 	return result, nil
 }
 
-func (c *MinioWriter) Store(ctx context.Context, objName string, r io.Reader) error {
+func (c *MinioWriter) Store(ctx context.Context, version int, r io.Reader) error {
 	size, err := util_io.TryGetSize(r)
 	if err != nil {
 		return errors.Wrap(err, "store minio object")
 	}
 
+	objName := strconv.Itoa(version) + Delimiter + ArchiveName
 	_, err = c.client.PutObject(ctx, c.bucket, objName, r, size, minio.PutObjectOptions{
 		ContentType: "application/x-zip-compressed",
 	})
@@ -113,21 +114,16 @@ func (c *MinioWriter) Store(ctx context.Context, objName string, r io.Reader) er
 	return nil
 }
 
-func (c *MinioWriter) GetLatestVersion(ctx context.Context) (int32, error) {
-	versions := make([]int32, 0)
+func (c *MinioWriter) ListVersions(ctx context.Context) ([]int, error) {
+	versions := make([]int, 0)
 	for obj := range c.client.ListObjects(ctx, c.bucket, minio.ListObjectsOptions{}) {
-		last := len(obj.Key)
-		version, err := strconv.Atoi(obj.Key[:last-1])
+		version, err := strconv.Atoi(obj.Key[:len(obj.Key)-1])
 		if err != nil {
-			return 0, errors.Wrap(err, "get latest diff version minio")
+			return nil, errors.Wrap(err, "get latest diff version minio")
 		}
 
-		versions = append(versions, int32(version))
+		versions = append(versions, version)
 	}
 
-	if len(versions) == 0 {
-		return 0, nil
-	}
-
-	return versions[len(versions)-1], nil
+	return versions, nil
 }

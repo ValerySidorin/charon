@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"time"
 
+	"github.com/samber/lo"
+
 	"github.com/hashicorp/go-retryablehttp"
 	"github.com/pkg/errors"
 
@@ -17,8 +19,8 @@ const (
 )
 
 type Config struct {
-	Timeout  int64 `yaml:"timeout"`
-	RetryMax int   `yaml:"retry_max"`
+	Timeout  time.Duration `yaml:"timeout"`
+	RetryMax int           `yaml:"retry_max"`
 }
 
 type Client struct {
@@ -28,20 +30,15 @@ type Client struct {
 func NewClient(cfg Config) *Client {
 	c := retryablehttp.NewClient()
 	c.RetryMax = cfg.RetryMax
-	c.HTTPClient.Timeout = time.Duration(cfg.Timeout) * time.Second
+	c.HTTPClient.Timeout = cfg.Timeout
 
 	return &Client{
 		httpClient: c,
 	}
 }
 
-func (c *Client) GetAllDownloadFileInfo(ctx context.Context) (*[]DownloadFileInfo, error) {
-	req, err := retryablehttp.NewRequest("get", GetAllDownloadFileInfoUrl, nil)
-	if err != nil {
-		return nil, errors.Wrap(err, "get all download file info")
-	}
-
-	resp, err := c.httpClient.Do(req.WithContext(ctx))
+func (c *Client) GetAllDownloadFileInfo(ctx context.Context) ([]DownloadFileInfo, error) {
+	resp, err := c.httpClient.Get(GetAllDownloadFileInfoUrl)
 	defer resp.Body.Close()
 	if err != nil {
 		return nil, errors.Wrap(err, "get all download file info")
@@ -51,12 +48,14 @@ func (c *Client) GetAllDownloadFileInfo(ctx context.Context) (*[]DownloadFileInf
 		return nil, errors.Wrap(err, "get all download file info")
 	}
 
-	res := make([]DownloadFileInfo, 0)
-	if err := json.NewDecoder(resp.Body).Decode(&res); err != nil {
+	allInfos := make([]DownloadFileInfo, 0)
+	if err := json.NewDecoder(resp.Body).Decode(&allInfos); err != nil {
 		return nil, errors.Wrap(err, "get all download file info")
 	}
 
-	return &res, nil
+	return lo.Filter(allInfos, func(item DownloadFileInfo, index int) bool {
+		return item.GARXmlDeltaUrl != ""
+	}), nil
 }
 
 func (c *Client) GetLastDownloadFileInfo(ctx context.Context) (*DownloadFileInfo, error) {

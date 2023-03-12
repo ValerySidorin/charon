@@ -14,13 +14,13 @@ type Config struct {
 }
 
 type Writer interface {
-	Store(ctx context.Context, objName string, r io.Reader) error
-	GetLatestVersion(ctx context.Context) (int32, error)
+	Store(ctx context.Context, version int, r io.Reader) error
+	ListVersions(ctx context.Context) ([]int, error)
 }
 
 type Reader interface {
 	Retrieve(ctx context.Context, objName string) (io.ReadCloser, error)
-	RetrieveObjNamesByVersion(ctx context.Context, version int32) ([]string, error)
+	RetrieveObjNamesByVersion(ctx context.Context, version int) ([]string, error)
 }
 
 func NewReader(cfg Config, bucket string) (Reader, error) {
