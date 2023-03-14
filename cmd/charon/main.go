@@ -58,23 +58,23 @@ walstore:
 		fmt.Println(err.Error())
 		os.Exit(1)
 	}
+
+	cfg2 := cfg
+	cfg2.DownloadersRing.InstanceID = "downloader_2"
+
+	ctx2, _ := context.WithCancel(context.Background())
+
+	d2, err := downloader.New(ctx, cfg2, prometheus.NewPedanticRegistry(), log.NewLogfmtLogger(os.Stdout))
+	if err != nil {
+		fmt.Println(err.Error())
+		os.Exit(1)
+	}
+
 	d.StartAsync(ctx)
+	d2.StartAsync(ctx2)
+
 	d.AwaitRunning(ctx)
-
-	// cfg2 := cfg
-	// cfg2.DownloadersRing.InstanceID = "downloader_2"
-
-	// ctx2, _ := context.WithCancel(context.Background())
-
-	// time.Sleep(10 * time.Second)
-
-	// d2, err := downloader.New(ctx, cfg2, prometheus.NewPedanticRegistry(), log.NewLogfmtLogger(os.Stdout))
-	// if err != nil {
-	// 	fmt.Println(err.Error())
-	// 	os.Exit(1)
-	// }
-	// d2.StartAsync(ctx2)
-	// d2.AwaitRunning(ctx2)
+	d2.AwaitRunning(ctx)
 
 	select {}
 }

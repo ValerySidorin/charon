@@ -75,6 +75,8 @@ func New(ctx context.Context, cfg Config, reg prometheus.Registerer, log gklog.L
 	cfg.InstanceID = cfg.DownloadersRing.InstanceID
 	cfg.LocalDirWithID = filepath.Join(cfg.LocalDir, cfg.InstanceID)
 
+	log = gklog.With(log, "service", "downloader", "id", cfg.InstanceID)
+
 	writer, err := diffstore.NewWriter(cfg.DiffStore, Bucket)
 	if err != nil {
 		return nil, errors.Wrap(err, "init diffstore writer for downloader")
@@ -153,7 +155,6 @@ func (d *Downloader) start(ctx context.Context) error {
 	d.subservices.StartAsync(ctx)
 	d.subservices.AwaitHealthy(ctx)
 	time.Sleep(beginAfter)
-	d.log = gklog.With(d.log, "service", "downloader", "id", d.cfg.InstanceID)
 
 	//Check for accidentally dropped downloads
 	level.Debug(d.log).Log("msg", "restoring downloader WAL")
@@ -206,24 +207,24 @@ func (d *Downloader) run(ctx context.Context) error {
 
 			if rbErr := d.wal.Unlock(ctx, false); rbErr != nil {
 				level.Error(d.log).Log("msg", rbErr.Error())
-				return rbErr
+				return nil
 			}
 
-			return err
+			return nil
 		}
 
 		//If we don't have our failed downloads, try to steal stale downloads from another members
 		if int(d.HealthyInstancesCount()) < d.downloadersRing.InstancesCount() {
 			if err := d.stealWALRecord(ctx); err != nil {
 				level.Error(d.log).Log("msg", err.Error())
-				return err
+				return nil
 			}
 		}
 
 		if d.currRec != nil {
 			if err := d.wal.Unlock(ctx, true); err != nil {
 				level.Error(d.log).Log("msg", err.Error())
-				return err
+				return nil
 			}
 		}
 	}
@@ -233,13 +234,13 @@ func (d *Downloader) run(ctx context.Context) error {
 	if d.currRec == nil {
 		if err := d.leaseWALRecord(ctx); err != nil {
 			level.Error(d.log).Log("msg", err.Error())
-			return err
+			return nil
 		}
 
 		if d.currRec != nil {
 			if err := d.wal.Unlock(ctx, true); err != nil {
 				level.Error(d.log).Log("msg", err.Error())
-				return err
+				return nil
 			}
 		}
 	}
@@ -248,7 +249,7 @@ func (d *Downloader) run(ctx context.Context) error {
 	if d.currRec == nil {
 		if err := d.wal.Unlock(ctx, true); err != nil {
 			level.Error(d.log).Log("msg", err.Error())
-			return err
+			return nil
 		}
 
 		return nil
@@ -256,7 +257,7 @@ func (d *Downloader) run(ctx context.Context) error {
 
 	if err := d.fileFetcher.Download(d.cfg.LocalDirWithID, d.currRec.Version, d.currRec.DownloadURL); err != nil {
 		level.Error(d.log).Log("msg", err.Error())
-		return err
+		return nil
 	}
 
 	if err := d.wal.Lock(ctx); err != nil {
@@ -264,37 +265,46 @@ func (d *Downloader) run(ctx context.Context) error {
 
 		if rbErr := d.wal.Unlock(ctx, false); rbErr != nil {
 			level.Error(d.log).Log("msg", rbErr.Error())
-			return rbErr
+			return nil
 		}
 
-		return err
+		return nil
 	}
 
 	versionedDir := filepath.Join(d.cfg.LocalDirWithID, strconv.Itoa(d.currRec.Version))
-	file, err := os.Open(filepath.Join(versionedDir, filefetcher.FileName))
+	fName := filepath.Join(versionedDir, filefetcher.FileName)
+
+	file, err := os.Open(fName)
 	if err != nil {
 		level.Error(d.log).Log("msg", err.Error())
-		return err
+
+		if rmErr := os.RemoveAll(versionedDir); rmErr != nil {
+			level.Error(d.log).Log("msg", rmErr.Error())
+			return nil
+		}
+
+		return nil
 	}
 
 	if err := d.diffStoreWriter.Store(ctx, d.currRec.Version, file); err != nil {
 		level.Error(d.log).Log("msg", err.Error())
-		return err
+		return nil
 	}
 	file.Close()
+
 	if err := os.RemoveAll(versionedDir); err != nil {
 		level.Error(d.log).Log("msg", err.Error())
-		return err
+		return nil
 	}
 
 	if err := d.wal.CompleteRecord(ctx, d.currRec); err != nil {
 		level.Error(d.log).Log("msg", err.Error())
-		return err
+		return nil
 	}
 
 	if err := d.wal.Unlock(ctx, true); err != nil {
 		level.Error(d.log).Log("msg", err.Error())
-		return err
+		return nil
 	}
 
 	d.currRec = nil
