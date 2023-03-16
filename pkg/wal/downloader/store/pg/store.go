@@ -191,6 +191,43 @@ func (s *Store) GetRecordsByStatus(ctx context.Context, status string) ([]*recor
 	return recs, nil
 }
 
+func (s *Store) GetUnsentRecords(ctx context.Context) ([]*record.Record, error) {
+	q := "select version, downloader_id, download_url, type, status from wal where status != 'SENT';"
+	recs := make([]*record.Record, 0)
+
+	if s.currTx != nil {
+		rows, err := s.currTx.Query(ctx, q)
+		if err != nil {
+			return nil, errors.Wrap(err, "pg wal store query unsent records")
+		}
+
+		for rows.Next() {
+			rec := record.Record{}
+			if err := scanRecordFromRows(rows, &rec); err != nil {
+				return nil, errors.Wrap(err, "pg wal store scan unsent records")
+			}
+			recs = append(recs, &rec)
+		}
+
+		return recs, nil
+	}
+
+	rows, err := s.conn.Query(ctx, q)
+	if err != nil {
+		return nil, errors.Wrap(err, "pg wal store query unsent records")
+	}
+
+	for rows.Next() {
+		rec := record.Record{}
+		if err := scanRecordFromRows(rows, &rec); err != nil {
+			return nil, errors.Wrap(err, "pg wal store scan unsent records")
+		}
+		recs = append(recs, &rec)
+	}
+
+	return recs, nil
+}
+
 func (s *Store) InsertRecord(ctx context.Context, rec *record.Record) error {
 	q := `insert into wal(version, downloader_id, download_url, type, status)
 	values($1, $2, $3, $4, $5);`

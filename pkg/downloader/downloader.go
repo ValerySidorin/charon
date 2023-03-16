@@ -241,15 +241,12 @@ func (d *Downloader) stop(_ error) error {
 
 func (d *Downloader) run(ctx context.Context) error {
 	if d.currRec == nil {
-		if err := d.wal.Lock(ctx); err != nil {
-			level.Error(d.log).Log("msg", err.Error())
-
-			if rbErr := d.wal.Unlock(ctx, false); rbErr != nil {
-				level.Error(d.log).Log("msg", rbErr.Error())
-				return nil
+		if err := d.lockWAL(ctx); err != nil {
+			if rbErr := d.unlockWALWithRollback(ctx); rbErr != nil {
+				return rbErr
 			}
 
-			return nil
+			return err
 		}
 
 		//If we don't have our failed downloads, try to steal stale downloads from another members
@@ -261,9 +258,8 @@ func (d *Downloader) run(ctx context.Context) error {
 		}
 
 		if d.currRec != nil {
-			if err := d.wal.Unlock(ctx, true); err != nil {
-				level.Error(d.log).Log("msg", err.Error())
-				return nil
+			if err := d.unlockWALWithCommit(ctx); err != nil {
+				return err
 			}
 		}
 	}
@@ -273,28 +269,24 @@ func (d *Downloader) run(ctx context.Context) error {
 	if d.currRec == nil {
 		if err := d.leaseWALRecord(ctx); err != nil {
 			level.Error(d.log).Log("msg", err.Error())
-
-			if err := d.wal.Unlock(ctx, true); err != nil {
-				level.Error(d.log).Log("msg", err.Error())
-				return nil
+			if err := d.unlockWALWithRollback(ctx); err != nil {
+				return err
 			}
 
 			return nil
 		}
 
 		if d.currRec != nil {
-			if err := d.wal.Unlock(ctx, true); err != nil {
-				level.Error(d.log).Log("msg", err.Error())
-				return nil
+			if err := d.unlockWALWithCommit(ctx); err != nil {
+				return err
 			}
 		}
 	}
 
 	//There is no diffs to process
 	if d.currRec == nil {
-		if err := d.wal.Unlock(ctx, true); err != nil {
-			level.Error(d.log).Log("msg", err.Error())
-			return nil
+		if err := d.unlockWALWithCommit(ctx); err != nil {
+			return err
 		}
 
 		return nil
@@ -305,15 +297,12 @@ func (d *Downloader) run(ctx context.Context) error {
 		return nil
 	}
 
-	if err := d.wal.Lock(ctx); err != nil {
-		level.Error(d.log).Log("msg", err.Error())
-
-		if rbErr := d.wal.Unlock(ctx, false); rbErr != nil {
-			level.Error(d.log).Log("msg", rbErr.Error())
-			return nil
+	if err := d.lockWAL(ctx); err != nil {
+		if rbErr := d.unlockWALWithRollback(ctx); rbErr != nil {
+			return rbErr
 		}
 
-		return nil
+		return err
 	}
 
 	versionedDir := filepath.Join(d.cfg.LocalDirWithID, strconv.Itoa(d.currRec.Version))
@@ -322,6 +311,9 @@ func (d *Downloader) run(ctx context.Context) error {
 	file, err := os.Open(fName)
 	if err != nil {
 		level.Error(d.log).Log("msg", err.Error())
+		if err := d.unlockWALWithRollback(ctx); err != nil {
+			return err
+		}
 
 		if rmErr := os.RemoveAll(versionedDir); rmErr != nil {
 			level.Error(d.log).Log("msg", rmErr.Error())
@@ -333,12 +325,19 @@ func (d *Downloader) run(ctx context.Context) error {
 
 	if err := d.diffStoreWriter.Store(ctx, d.currRec.Version, file); err != nil {
 		level.Error(d.log).Log("msg", err.Error())
+		if err := d.unlockWALWithRollback(ctx); err != nil {
+			return err
+		}
 		return nil
 	}
 	file.Close()
 
 	if err := os.RemoveAll(versionedDir); err != nil {
 		level.Error(d.log).Log("msg", err.Error())
+		if err := d.unlockWALWithRollback(ctx); err != nil {
+			return err
+		}
+
 		return nil
 	}
 
@@ -347,13 +346,11 @@ func (d *Downloader) run(ctx context.Context) error {
 		return nil
 	}
 
-	if err := d.wal.Unlock(ctx, true); err != nil {
-		level.Error(d.log).Log("msg", err.Error())
-		return nil
+	if err := d.unlockWALWithCommit(ctx); err != nil {
+		return err
 	}
 
 	d.currRec = nil
-
 	return nil
 }
 
@@ -424,7 +421,6 @@ func (d *Downloader) getWALRecordToProcess(ctx context.Context) (*walrecord.Reco
 				return walrecord.New(fInfo.VersionID, d.cfg.InstanceID, fInfo.GARXMLFullURL, wal.FileTypeFull, walrecord.PROCESSING), nil
 			}
 
-			fmt.Println(d.cfg.InstanceID, "123123")
 			return nil, errors.New("no file infos available")
 		}
 	}
@@ -455,6 +451,36 @@ func (d *Downloader) getWALRecordToProcess(ctx context.Context) (*walrecord.Reco
 	}
 
 	return nil, errors.New("no new file infos")
+}
+
+func (d *Downloader) sendVersionBatchToQueue(ctx context.Context) {
+
+}
+func (d *Downloader) lockWAL(ctx context.Context) error {
+	if err := d.wal.Lock(ctx); err != nil {
+		level.Error(d.log).Log("msg", err.Error())
+		return err
+	}
+
+	return nil
+}
+
+func (d *Downloader) unlockWALWithRollback(ctx context.Context) error {
+	if err := d.wal.Unlock(ctx, false); err != nil {
+		level.Error(d.log).Log("msg", err.Error())
+		return err
+	}
+
+	return nil
+}
+
+func (d *Downloader) unlockWALWithCommit(ctx context.Context) error {
+	if err := d.wal.Unlock(ctx, true); err != nil {
+		level.Error(d.log).Log("msg", err.Error())
+		return err
+	}
+
+	return nil
 }
 
 func (d *Downloader) HealthyInstancesCount() uint32 {

@@ -77,6 +77,10 @@ func (w *WAL) GetRecordsByStatus(ctx context.Context, status string) ([]*record.
 	return w.store.GetRecordsByStatus(ctx, status)
 }
 
+func (w *WAL) GetUnsentRecords(ctx context.Context, status string) ([]*record.Record, error) {
+	return w.store.GetUnsentRecords(ctx)
+}
+
 func (w *WAL) CompleteRecord(ctx context.Context, rec *record.Record) error {
 	rec.Status = record.COMPLETED
 	return w.store.UpdateRecord(ctx, rec)
