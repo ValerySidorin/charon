@@ -7,7 +7,11 @@ import (
 	"github.com/ValerySidorin/charon/pkg/wal/downloader/record"
 	"github.com/ValerySidorin/charon/pkg/wal/downloader/store"
 	"github.com/go-kit/log"
-	"github.com/pkg/errors"
+)
+
+const (
+	FileTypeFull = "full"
+	FileTypeDiff = "diff"
 )
 
 type WAL struct {
@@ -29,15 +33,15 @@ func NewWAL(ctx context.Context, cfg config.Config, log log.Logger) (*WAL, error
 
 func (w *WAL) Lock(ctx context.Context) error {
 	if err := w.store.BeginTransaction(ctx); err != nil {
-		return errors.Wrap(err, "wal lock begin transaction")
+		return err
 	}
 
 	if err := w.store.LockAllRecords(ctx); err != nil {
 		if rbErr := w.store.RollbackTransaction(ctx); rbErr != nil {
-			return errors.Wrap(rbErr, "wal lock rollback transaction")
+			return rbErr
 		}
 
-		return errors.Wrap(err, "wal lock")
+		return err
 	}
 
 	return nil
@@ -47,53 +51,44 @@ func (w *WAL) Unlock(ctx context.Context, commit bool) error {
 	if commit {
 		if err := w.store.CommitTransaction(ctx); err != nil {
 			if rbErr := w.store.RollbackTransaction(ctx); rbErr != nil {
-				return errors.Wrap(rbErr, "wal unlock rollback transaction")
+				return rbErr
 			}
 
-			return errors.Wrap(err, "wal unlock commit transaction")
+			return err
 		}
 	} else {
 		if err := w.store.RollbackTransaction(ctx); err != nil {
-			return errors.Wrap(err, "wal unlock rollback transaction")
+			return err
 		}
 	}
 
 	return nil
 }
 
-func (w *WAL) GetProcessingRecords(ctx context.Context) ([]*record.Record, error) {
-	r, err := w.store.GetProcessingRecords(ctx)
-	if err != nil {
-		return nil, errors.Wrap(err, "wal get processing downloads")
-	}
+func (w *WAL) GetFirstRecord(ctx context.Context) (*record.Record, bool, error) {
+	return w.store.GetFirstRecord(ctx)
+}
 
-	return r, nil
+func (w *WAL) GetAllRecords(ctx context.Context) ([]*record.Record, error) {
+	return w.store.GetAllRecords(ctx)
+}
+
+func (w *WAL) GetRecordsByStatus(ctx context.Context, status string) ([]*record.Record, error) {
+	return w.store.GetRecordsByStatus(ctx, status)
 }
 
 func (w *WAL) CompleteRecord(ctx context.Context, rec *record.Record) error {
 	rec.Status = record.COMPLETED
-	if err := w.store.UpdateRecord(ctx, rec); err != nil {
-		return errors.Wrap(err, "wal complete record")
-	}
-
-	return nil
+	return w.store.UpdateRecord(ctx, rec)
 }
 
 func (w *WAL) StealRecord(ctx context.Context, rec *record.Record, dID string) error {
 	rec.DownloaderID = dID
-	if err := w.store.UpdateRecord(ctx, rec); err != nil {
-		return errors.Wrap(err, "steal wal record")
-	}
-
-	return nil
+	return w.store.UpdateRecord(ctx, rec)
 }
 
 func (w *WAL) AddRecord(ctx context.Context, rec *record.Record) error {
-	if err := w.store.InsertRecord(ctx, rec); err != nil {
-		return errors.Wrap(err, "add wal record")
-	}
-
-	return nil
+	return w.store.InsertRecord(ctx, rec)
 }
 
 func (w *WAL) Dispose(ctx context.Context) {

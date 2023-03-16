@@ -2,5 +2,6 @@ package fiasnalog
 
 type DownloadFileInfo struct {
 	VersionID      int    `json:"versionId"`
-	GARXmlDeltaUrl string `json:"garXMLDeltaUrl"`
+	GARXMLDeltaURL string `json:"garXMLDeltaUrl"`
+	GARXMLFullURL  string `json:"garXMLFullUrl"`
 }

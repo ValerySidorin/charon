@@ -12,7 +12,7 @@ import (
 )
 
 const (
-	ArchiveName string = "delta.zip"
+	ArchiveName string = "gar.zip"
 	Delimiter   string = "/"
 )
 

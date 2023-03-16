@@ -15,7 +15,9 @@ type Store interface {
 	RollbackTransaction(ctx context.Context) error
 	CommitTransaction(ctx context.Context) error
 	LockAllRecords(ctx context.Context) error
-	GetProcessingRecords(ctx context.Context) ([]*record.Record, error)
+	GetFirstRecord(ctx context.Context) (*record.Record, bool, error)
+	GetAllRecords(ctx context.Context) ([]*record.Record, error)
+	GetRecordsByStatus(ctx context.Context, status string) ([]*record.Record, error)
 	InsertRecord(ctx context.Context, rec *record.Record) error
 	UpdateRecord(ctx context.Context, rec *record.Record) error
 	Dispose(ctx context.Context) error

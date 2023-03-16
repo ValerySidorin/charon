@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/ValerySidorin/charon/pkg/downloader"
 	"github.com/go-kit/log"
@@ -13,8 +14,10 @@ import (
 
 func main() {
 	conf := `
-starting_version: 0
-polling_interval: 1s
+start_from:
+  file_type: diff
+  version: 20230314
+polling_interval: 10s
 local_dir: D://charon/downloader
 fias_nalog: 
   timeout: 30s
@@ -64,17 +67,21 @@ walstore:
 
 	ctx2, _ := context.WithCancel(context.Background())
 
-	d2, err := downloader.New(ctx, cfg2, prometheus.NewPedanticRegistry(), log.NewLogfmtLogger(os.Stdout))
+	d2, err := downloader.New(ctx2, cfg2, prometheus.NewPedanticRegistry(), log.NewLogfmtLogger(os.Stdout))
 	if err != nil {
 		fmt.Println(err.Error())
 		os.Exit(1)
 	}
 
 	d.StartAsync(ctx)
+	time.Sleep(1 * time.Second) // For testing purposes, not required
 	d2.StartAsync(ctx2)
 
 	d.AwaitRunning(ctx)
 	d2.AwaitRunning(ctx)
+
+	fmt.Println(d.State().String())
+	fmt.Println(d2.State().String())
 
 	select {}
 }

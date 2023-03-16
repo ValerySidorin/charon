@@ -2,6 +2,7 @@ package pg
 
 import (
 	"context"
+	"database/sql"
 
 	"github.com/ValerySidorin/charon/pkg/wal/config/pg"
 	"github.com/ValerySidorin/charon/pkg/wal/downloader/record"
@@ -25,7 +26,7 @@ func NewWALStore(ctx context.Context, cfg pg.Config, log log.Logger) (*Store, er
 	}
 
 	q := `create table if not exists public.wal 
-	(version integer not null, downloader_id text not null, download_url text not null, status text not null);`
+	(version integer not null, downloader_id text not null, download_url text not null, type text not null, status text not null);`
 	if _, err := conn.Exec(ctx, q); err != nil {
 		return nil, errors.Wrap(err, "pg wal store init wal table")
 	}
@@ -89,20 +90,47 @@ func (s *Store) LockAllRecords(ctx context.Context) error {
 	return nil
 }
 
-func (s *Store) GetProcessingRecords(ctx context.Context) ([]*record.Record, error) {
-	q := "select version, downloader_id, download_url, status from wal where status = 'PROCESSING';"
+func (s *Store) GetFirstRecord(ctx context.Context) (*record.Record, bool, error) {
+	q := "select version, downloader_id, download_url, type, status from wal limit 1"
+	var rec record.Record
+
+	if s.currTx != nil {
+		row := s.currTx.QueryRow(ctx, q)
+		if err := scanRecordFromRow(row, &rec); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return nil, false, nil
+			}
+			return nil, false, errors.Wrap(err, "pg wal store query first record")
+		}
+
+		return &rec, true, nil
+	}
+
+	row := s.conn.QueryRow(ctx, q)
+	if err := scanRecordFromRow(row, &rec); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, false, nil
+		}
+		return nil, false, errors.Wrap(err, "pg wal store query first record")
+	}
+
+	return &rec, true, nil
+}
+
+func (s *Store) GetAllRecords(ctx context.Context) ([]*record.Record, error) {
+	q := "select version, downloader_id, download_url, type, status from wal;"
 	recs := make([]*record.Record, 0)
 
 	if s.currTx != nil {
 		rows, err := s.currTx.Query(ctx, q)
 		if err != nil {
-			return nil, errors.Wrap(err, "pg wal store query processing records")
+			return nil, errors.Wrap(err, "pg wal store query all records")
 		}
 
 		for rows.Next() {
 			rec := record.Record{}
 			if err := scanRecordFromRows(rows, &rec); err != nil {
-				return nil, errors.Wrap(err, "pg wal store scan processing records")
+				return nil, errors.Wrap(err, "pg wal store scan all records")
 			}
 			recs = append(recs, &rec)
 		}
@@ -112,13 +140,50 @@ func (s *Store) GetProcessingRecords(ctx context.Context) ([]*record.Record, err
 
 	rows, err := s.conn.Query(ctx, q)
 	if err != nil {
-		return nil, errors.Wrap(err, "pg wal store query processing records")
+		return nil, errors.Wrap(err, "pg wal store query all records")
 	}
 
 	for rows.Next() {
 		rec := record.Record{}
 		if err := scanRecordFromRows(rows, &rec); err != nil {
-			return nil, errors.Wrap(err, "pg wal store scan processing records")
+			return nil, errors.Wrap(err, "pg wal store scan all records")
+		}
+		recs = append(recs, &rec)
+	}
+
+	return recs, nil
+}
+
+func (s *Store) GetRecordsByStatus(ctx context.Context, status string) ([]*record.Record, error) {
+	q := "select version, downloader_id, download_url, type, status from wal where status = $1;"
+	recs := make([]*record.Record, 0)
+
+	if s.currTx != nil {
+		rows, err := s.currTx.Query(ctx, q, status)
+		if err != nil {
+			return nil, errors.Wrap(err, "pg wal store query records by status")
+		}
+
+		for rows.Next() {
+			rec := record.Record{}
+			if err := scanRecordFromRows(rows, &rec); err != nil {
+				return nil, errors.Wrap(err, "pg wal store scan records by status")
+			}
+			recs = append(recs, &rec)
+		}
+
+		return recs, nil
+	}
+
+	rows, err := s.conn.Query(ctx, q, status)
+	if err != nil {
+		return nil, errors.Wrap(err, "pg wal store query records by status")
+	}
+
+	for rows.Next() {
+		rec := record.Record{}
+		if err := scanRecordFromRows(rows, &rec); err != nil {
+			return nil, errors.Wrap(err, "pg wal store scan records by status")
 		}
 		recs = append(recs, &rec)
 	}
@@ -127,11 +192,11 @@ func (s *Store) GetProcessingRecords(ctx context.Context) ([]*record.Record, err
 }
 
 func (s *Store) InsertRecord(ctx context.Context, rec *record.Record) error {
-	q := `insert into wal(version, downloader_id, download_url, status)
-	values($1, $2, $3, $4);`
+	q := `insert into wal(version, downloader_id, download_url, type, status)
+	values($1, $2, $3, $4, $5);`
 
 	if s.currTx != nil {
-		_, err := s.currTx.Exec(ctx, q, rec.Version, rec.DownloaderID, rec.DownloadURL, rec.Status)
+		_, err := s.currTx.Exec(ctx, q, rec.Version, rec.DownloaderID, rec.DownloadURL, rec.Type, rec.Status)
 		if err != nil {
 			return errors.Wrap(err, "pg wal store insert record")
 		}
@@ -139,7 +204,7 @@ func (s *Store) InsertRecord(ctx context.Context, rec *record.Record) error {
 		return nil
 	}
 
-	_, err := s.conn.Exec(ctx, q, rec.Version, rec.DownloaderID, rec.DownloadURL, rec.Status)
+	_, err := s.conn.Exec(ctx, q, rec.Version, rec.DownloaderID, rec.DownloadURL, rec.Type, rec.Status)
 	if err != nil {
 		return errors.Wrap(err, "pg wal store insert record")
 	}
@@ -186,7 +251,15 @@ func (s *Store) Dispose(ctx context.Context) error {
 }
 
 func scanRecordFromRows(rows pgx.Rows, rec *record.Record) error {
-	if err := rows.Scan(&rec.Version, &rec.DownloaderID, &rec.DownloadURL, &rec.Status); err != nil {
+	if err := rows.Scan(&rec.Version, &rec.DownloaderID, &rec.DownloadURL, &rec.Type, &rec.Status); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func scanRecordFromRow(row pgx.Row, rec *record.Record) error {
+	if err := row.Scan(&rec.Version, &rec.DownloaderID, &rec.DownloadURL, &rec.Type, &rec.Status); err != nil {
 		return err
 	}
 

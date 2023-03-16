@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	FileName = "delta.zip"
+	FileName = "gar.zip"
 )
 
 type Config struct {
