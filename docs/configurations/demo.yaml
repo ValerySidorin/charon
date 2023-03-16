@@ -1,0 +1,38 @@
+downloader:
+  starting_version: 0
+  polling_interval: 1s
+  fias_nalog: 
+    timeout: 30s
+    retry_max: 5
+  file_fetcher:
+    buffer_size: 4096
+    local_dir: D://downloader/downloader_1
+  ring:
+    heartbeat_period: 1s
+    heartbeat_timeout: 2s
+    instance_id: downloader_1
+  kvstore:
+    store: consul
+    consul:
+      host: "127.0.0.1:8500"
+      consistentreads: true
+    prefix: "charon/"
+  diffstore:
+    store: minio
+    minio:
+      endpoint: "localhost:9000"
+      minio_root_user: minioadmin
+      minio_root_password: minioadmin
+
+importer:
+  queue:
+    type: nats
+    nats:
+      url: "localhost:4222"
+  diffstore:
+    store: minio
+    minio:
+      endpoint: "localhost:9000"
+      minio_root_user: minioadmin
+      minio_root_password: minioadmin
+  
