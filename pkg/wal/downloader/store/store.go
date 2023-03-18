@@ -21,6 +21,7 @@ type Store interface {
 	GetUnsentRecords(ctx context.Context) ([]*record.Record, error)
 	InsertRecord(ctx context.Context, rec *record.Record) error
 	UpdateRecord(ctx context.Context, rec *record.Record) error
+	HasCompletedRecords(ctx context.Context, dID string) (bool, error)
 	Dispose(ctx context.Context) error
 }
 

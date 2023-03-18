@@ -81,8 +81,7 @@ func (w *WAL) GetUnsentRecords(ctx context.Context, status string) ([]*record.Re
 	return w.store.GetUnsentRecords(ctx)
 }
 
-func (w *WAL) CompleteRecord(ctx context.Context, rec *record.Record) error {
-	rec.Status = record.COMPLETED
+func (w *WAL) UpdateRecord(ctx context.Context, rec *record.Record) error {
 	return w.store.UpdateRecord(ctx, rec)
 }
 
@@ -93,6 +92,10 @@ func (w *WAL) StealRecord(ctx context.Context, rec *record.Record, dID string) e
 
 func (w *WAL) AddRecord(ctx context.Context, rec *record.Record) error {
 	return w.store.InsertRecord(ctx, rec)
+}
+
+func (w *WAL) HasCompletedRecords(ctx context.Context, dID string) (bool, error) {
+	return w.store.HasCompletedRecords(ctx, dID)
 }
 
 func (w *WAL) Dispose(ctx context.Context) {
