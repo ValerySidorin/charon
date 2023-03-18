@@ -191,6 +191,43 @@ func (s *Store) GetRecordsByStatus(ctx context.Context, status string) ([]*recor
 	return recs, nil
 }
 
+func (s *Store) GetUnsentRecords(ctx context.Context) ([]*record.Record, error) {
+	q := "select version, downloader_id, download_url, type, status from wal where status != 'SENT';"
+	recs := make([]*record.Record, 0)
+
+	if s.currTx != nil {
+		rows, err := s.currTx.Query(ctx, q)
+		if err != nil {
+			return nil, errors.Wrap(err, "pg wal store query unsent records")
+		}
+
+		for rows.Next() {
+			rec := record.Record{}
+			if err := scanRecordFromRows(rows, &rec); err != nil {
+				return nil, errors.Wrap(err, "pg wal store scan unsent records")
+			}
+			recs = append(recs, &rec)
+		}
+
+		return recs, nil
+	}
+
+	rows, err := s.conn.Query(ctx, q)
+	if err != nil {
+		return nil, errors.Wrap(err, "pg wal store query unsent records")
+	}
+
+	for rows.Next() {
+		rec := record.Record{}
+		if err := scanRecordFromRows(rows, &rec); err != nil {
+			return nil, errors.Wrap(err, "pg wal store scan unsent records")
+		}
+		recs = append(recs, &rec)
+	}
+
+	return recs, nil
+}
+
 func (s *Store) InsertRecord(ctx context.Context, rec *record.Record) error {
 	q := `insert into wal(version, downloader_id, download_url, type, status)
 	values($1, $2, $3, $4, $5);`
@@ -234,6 +271,25 @@ func (s *Store) UpdateRecord(ctx context.Context, rec *record.Record) error {
 	}
 
 	return nil
+}
+
+func (s *Store) HasCompletedRecords(ctx context.Context, dID string) (bool, error) {
+	var count int
+	q := "select count(version) from wal where downloader_id = $1 and status = 'COMPLETED'"
+
+	if s.currTx != nil {
+		if err := s.currTx.QueryRow(ctx, q, dID).Scan(&count); err != nil {
+			return false, errors.Wrap(err, "pg wal store has completed records")
+		}
+
+		return count > 0, nil
+	}
+
+	if err := s.conn.QueryRow(ctx, q, dID).Scan(&count); err != nil {
+		return false, errors.Wrap(err, "pg wal store has completed records")
+	}
+
+	return count > 0, nil
 }
 
 func (s *Store) Dispose(ctx context.Context) error {

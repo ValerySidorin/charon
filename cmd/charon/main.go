@@ -16,7 +16,7 @@ func main() {
 	conf := `
 start_from:
   file_type: diff
-  version: 20230314
+  version: 20230317
 polling_interval: 10s
 local_dir: D://charon/downloader
 fias_nalog: 
@@ -45,6 +45,11 @@ walstore:
   store: pg
   pg:
     conn: postgres://charonpostgres:charonpostgres@localhost:5432/downloader
+notifier:
+  check_interval: 10s
+  queue:
+    type: nats
+    conn: nats://charonnats:charonnats@localhost:4222
 `
 
 	cfg := downloader.Config{}
@@ -64,6 +69,7 @@ walstore:
 
 	cfg2 := cfg
 	cfg2.DownloadersRing.InstanceID = "downloader_2"
+	cfg2.StartFrom.Version = 20230314
 
 	ctx2, _ := context.WithCancel(context.Background())
 
@@ -74,10 +80,10 @@ walstore:
 	}
 
 	d.StartAsync(ctx)
-	time.Sleep(1 * time.Second) // For testing purposes, not required
-	d2.StartAsync(ctx2)
-
 	d.AwaitRunning(ctx)
+
+	time.Sleep(5 * time.Second) // For testing purposes, not required
+	d2.StartAsync(ctx2)
 	d2.AwaitRunning(ctx)
 
 	fmt.Println(d.State().String())
