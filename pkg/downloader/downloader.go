@@ -62,8 +62,8 @@ type Downloader struct {
 type Config struct {
 	StartFrom       StartFromConfig `yaml:"start_from"`
 	PollingInterval time.Duration   `yaml:"polling_interval"`
-	LocalDir        string          `yaml:"local_dir"`
-	LocalDirWithID  string          `yaml:"-"`
+	TempDir         string          `yaml:"temp_dir"`
+	TempDirWithID   string          `yaml:"-"`
 	InstanceID      string          `yaml:"-"`
 
 	DownloadersRing DownloaderRingConfig `yaml:"ring"`
@@ -83,7 +83,7 @@ type StartFromConfig struct {
 
 func New(ctx context.Context, cfg Config, reg prometheus.Registerer, log gklog.Logger) (*Downloader, error) {
 	cfg.InstanceID = cfg.DownloadersRing.InstanceID
-	cfg.LocalDirWithID = filepath.Join(cfg.LocalDir, cfg.InstanceID)
+	cfg.TempDirWithID = filepath.Join(cfg.TempDir, cfg.InstanceID)
 
 	log = gklog.With(log, "service", "downloader", "id", cfg.InstanceID)
 
@@ -297,7 +297,7 @@ func (d *Downloader) run(ctx context.Context) error {
 		return nil
 	}
 
-	if err := d.fileFetcher.Download(d.cfg.LocalDirWithID, d.currRec.Version, d.currRec.DownloadURL); err != nil {
+	if err := d.fileFetcher.Download(d.cfg.TempDirWithID, d.currRec.Version, d.currRec.DownloadURL); err != nil {
 		level.Error(d.log).Log("msg", err.Error())
 		return nil
 	}
@@ -310,7 +310,7 @@ func (d *Downloader) run(ctx context.Context) error {
 		return err
 	}
 
-	versionedDir := filepath.Join(d.cfg.LocalDirWithID, strconv.Itoa(d.currRec.Version))
+	versionedDir := filepath.Join(d.cfg.TempDirWithID, strconv.Itoa(d.currRec.Version))
 	fName := filepath.Join(versionedDir, filefetcher.FileName)
 
 	file, err := os.Open(fName)

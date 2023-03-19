@@ -3,6 +3,7 @@ package notifier
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strconv"
 	"time"
 
@@ -78,7 +79,11 @@ func (n *Notifier) run(ctx context.Context) error {
 		}
 	}
 
-	recs, err := n.wal.GetRecordsByStatus(ctx, walrecord.COMPLETED)
+	recs, err := n.wal.GetUnsentRecords(ctx)
+	sort.Slice(recs[:], func(i, j int) bool {
+		return recs[i].Version < recs[j].Version
+	})
+
 	if err != nil {
 		level.Error(n.log).Log("msg", err.Error())
 		if err := n.wal.Unlock(ctx, false); err != nil {
