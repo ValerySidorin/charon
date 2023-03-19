@@ -18,7 +18,7 @@ start_from:
   file_type: diff
   version: 20230317
 polling_interval: 10s
-local_dir: D://charon/downloader
+temp_dir: D://charon/downloader
 fias_nalog: 
   timeout: 30s
   retry_max: 5
@@ -31,25 +31,25 @@ ring:
   kvstore:
     store: consul
     consul:
-      host: "127.0.0.1:8500"
+      host: "localhost:8500"
       consistentreads: true
-      acl_token: charonconsul
+      acl_token: charon
     prefix: "charon/"
 diffstore:
   store: minio
   minio:
-    endpoint: "127.0.0.1:9000"
-    minio_root_user: charonminio
-    minio_root_password: charonminio
+    endpoint: "localhost:9000"
+    minio_root_user: charon
+    minio_root_password: charonpwd
 walstore:
   store: pg
   pg:
-    conn: postgres://charonpostgres:charonpostgres@localhost:5432/downloader
+    conn: postgres://charon:charonpwd@localhost:5432/charon
 notifier:
   check_interval: 10s
   queue:
     type: nats
-    conn: nats://charonnats:charonnats@localhost:4222
+    conn: nats://charon:charonpwd@localhost:4222
 `
 
 	cfg := downloader.Config{}
@@ -82,7 +82,7 @@ notifier:
 	d.StartAsync(ctx)
 	d.AwaitRunning(ctx)
 
-	time.Sleep(5 * time.Second) // For testing purposes, not required
+	time.Sleep(10 * time.Second) // For testing purposes, not required
 	d2.StartAsync(ctx2)
 	d2.AwaitRunning(ctx)
 

@@ -25,7 +25,7 @@ func NewWALStore(ctx context.Context, cfg pg.Config, log log.Logger) (*Store, er
 		return nil, errors.Wrap(err, "pg wal store init conn")
 	}
 
-	q := `create table if not exists public.wal 
+	q := `create table if not exists public.downloader_wal 
 	(version integer not null, downloader_id text not null, download_url text not null, type text not null, status text not null);`
 	if _, err := conn.Exec(ctx, q); err != nil {
 		return nil, errors.Wrap(err, "pg wal store init wal table")
@@ -81,7 +81,7 @@ func (s *Store) LockAllRecords(ctx context.Context) error {
 		return errors.New("pg wal store can't lock table without transaction")
 	}
 
-	q := "lock table wal in access exclusive mode;"
+	q := "lock table downloader_wal in access exclusive mode;"
 	_, err := s.currTx.Exec(ctx, q)
 	if err != nil {
 		return errors.Wrap(err, "pg wal store lock table")
@@ -91,7 +91,7 @@ func (s *Store) LockAllRecords(ctx context.Context) error {
 }
 
 func (s *Store) GetFirstRecord(ctx context.Context) (*record.Record, bool, error) {
-	q := "select version, downloader_id, download_url, type, status from wal limit 1"
+	q := "select version, downloader_id, download_url, type, status from downloader_wal limit 1"
 	var rec record.Record
 
 	if s.currTx != nil {
@@ -118,7 +118,7 @@ func (s *Store) GetFirstRecord(ctx context.Context) (*record.Record, bool, error
 }
 
 func (s *Store) GetAllRecords(ctx context.Context) ([]*record.Record, error) {
-	q := "select version, downloader_id, download_url, type, status from wal;"
+	q := "select version, downloader_id, download_url, type, status from downloader_wal;"
 	recs := make([]*record.Record, 0)
 
 	if s.currTx != nil {
@@ -155,7 +155,7 @@ func (s *Store) GetAllRecords(ctx context.Context) ([]*record.Record, error) {
 }
 
 func (s *Store) GetRecordsByStatus(ctx context.Context, status string) ([]*record.Record, error) {
-	q := "select version, downloader_id, download_url, type, status from wal where status = $1;"
+	q := "select version, downloader_id, download_url, type, status from downloader_wal where status = $1;"
 	recs := make([]*record.Record, 0)
 
 	if s.currTx != nil {
@@ -192,7 +192,7 @@ func (s *Store) GetRecordsByStatus(ctx context.Context, status string) ([]*recor
 }
 
 func (s *Store) GetUnsentRecords(ctx context.Context) ([]*record.Record, error) {
-	q := "select version, downloader_id, download_url, type, status from wal where status != 'SENT';"
+	q := "select version, downloader_id, download_url, type, status from downloader_wal where status != 'SENT';"
 	recs := make([]*record.Record, 0)
 
 	if s.currTx != nil {
@@ -229,7 +229,7 @@ func (s *Store) GetUnsentRecords(ctx context.Context) ([]*record.Record, error) 
 }
 
 func (s *Store) InsertRecord(ctx context.Context, rec *record.Record) error {
-	q := `insert into wal(version, downloader_id, download_url, type, status)
+	q := `insert into downloader_wal(version, downloader_id, download_url, type, status)
 	values($1, $2, $3, $4, $5);`
 
 	if s.currTx != nil {
@@ -250,7 +250,7 @@ func (s *Store) InsertRecord(ctx context.Context, rec *record.Record) error {
 }
 
 func (s *Store) UpdateRecord(ctx context.Context, rec *record.Record) error {
-	q := `update wal
+	q := `update downloader_wal
 	set downloader_id = $2,
 	download_url = $3,
 	status = $4
@@ -275,7 +275,7 @@ func (s *Store) UpdateRecord(ctx context.Context, rec *record.Record) error {
 
 func (s *Store) HasCompletedRecords(ctx context.Context, dID string) (bool, error) {
 	var count int
-	q := "select count(version) from wal where downloader_id = $1 and status = 'COMPLETED'"
+	q := "select count(version) from downloader_wal where downloader_id = $1 and status = 'COMPLETED'"
 
 	if s.currTx != nil {
 		if err := s.currTx.QueryRow(ctx, q, dID).Scan(&count); err != nil {
