@@ -1,10 +1,10 @@
 package queue
 
 import (
-	"errors"
-
+	"github.com/ValerySidorin/charon/pkg/queue/message"
 	"github.com/ValerySidorin/charon/pkg/queue/nats"
 	"github.com/go-kit/log"
+	"github.com/pkg/errors"
 )
 
 type Config struct {
@@ -13,14 +13,23 @@ type Config struct {
 }
 
 type Publisher interface {
-	Publish(channel string, msg string) error
+	Pub(channel string, msg *message.Message) error
 }
 
-type Suscriber interface {
-	Suscribe(channel string, action func(msg string)) error
+type Subscriber interface {
+	Sub(channel string, action func(msg *message.Message)) error
 }
 
 func NewPublisher(cfg Config, log log.Logger) (Publisher, error) {
+	switch cfg.Type {
+	case "nats":
+		return nats.NewNatsClient(cfg.Nats, log)
+	default:
+		return nil, errors.New("invalid queue type")
+	}
+}
+
+func NewSubscriber(cfg Config, log log.Logger) (Subscriber, error) {
 	switch cfg.Type {
 	case "nats":
 		return nats.NewNatsClient(cfg.Nats, log)

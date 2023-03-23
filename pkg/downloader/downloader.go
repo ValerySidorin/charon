@@ -13,9 +13,11 @@ import (
 	"github.com/ValerySidorin/charon/pkg/fiasnalog"
 	"github.com/ValerySidorin/charon/pkg/filefetcher"
 	"github.com/ValerySidorin/charon/pkg/queue"
-	walconfig "github.com/ValerySidorin/charon/pkg/wal/config"
-	wal "github.com/ValerySidorin/charon/pkg/wal/downloader"
-	walrecord "github.com/ValerySidorin/charon/pkg/wal/downloader/record"
+	"github.com/ValerySidorin/charon/pkg/util"
+	"github.com/ValerySidorin/charon/pkg/wal"
+	walcfg "github.com/ValerySidorin/charon/pkg/wal/config"
+	dwal "github.com/ValerySidorin/charon/pkg/wal/downloader"
+	walrec "github.com/ValerySidorin/charon/pkg/wal/downloader/record"
 	gklog "github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/grafana/dskit/kv"
@@ -28,7 +30,6 @@ import (
 )
 
 const (
-	Bucket            = "charondiffstore"
 	downloaderRingKey = "downloader"
 
 	beginAfter                   = 1 * time.Second
@@ -41,10 +42,10 @@ type Downloader struct {
 	cfg Config
 	log gklog.Logger
 
-	//Ring services
+	//Lifetime services
 	downloadersLifecycler *ring.BasicLifecycler
 	downloadersRing       *ring.Ring
-	instanceMap           *concurrentInstanceMap
+	instanceMap           *util.ConcurrentInstanceMap
 	healthyInstancesCount *atomic.Uint32
 	subservices           *services.Manager
 
@@ -53,8 +54,8 @@ type Downloader struct {
 	fileFetcher     *filefetcher.FileFetcher
 
 	notifier *notifier.Notifier
-	wal      *wal.WAL
-	currRec  *walrecord.Record
+	wal      *dwal.WAL
+	currRec  *walrec.Record
 
 	fileTypeDownloading string
 }
@@ -68,9 +69,9 @@ type Config struct {
 
 	DownloadersRing DownloaderRingConfig `yaml:"ring"`
 
-	WAL         walconfig.Config   `yaml:"walstore"`
+	WAL         walcfg.Config      `yaml:"wal"`
 	Queue       queue.Config       `yaml:"queue"`
-	DiffStore   diffstore.Config   `yaml:"diffstore"`
+	DiffStore   diffstore.Config   `yaml:"diff_store"`
 	FiasNalog   fiasnalog.Config   `yaml:"fias_nalog"`
 	FileFetcher filefetcher.Config `yaml:"file_fetcher"`
 	Notifier    notifier.Config    `yaml:"notifier"`
@@ -87,12 +88,12 @@ func New(ctx context.Context, cfg Config, reg prometheus.Registerer, log gklog.L
 
 	log = gklog.With(log, "service", "downloader", "id", cfg.InstanceID)
 
-	writer, err := diffstore.NewWriter(cfg.DiffStore, Bucket)
+	writer, err := diffstore.NewWriter(cfg.DiffStore, diffstore.Bucket)
 	if err != nil {
 		return nil, errors.Wrap(err, "downloader connect to diffstore as writer")
 	}
 
-	wal, err := wal.NewWAL(ctx, cfg.WAL, log)
+	wal, err := dwal.NewWAL(ctx, cfg.WAL, log)
 	if err != nil {
 		return nil, errors.Wrap(err, "downloader connect to WAL")
 	}
@@ -104,7 +105,7 @@ func New(ctx context.Context, cfg Config, reg prometheus.Registerer, log gklog.L
 		fiasNalogClient:       fiasnalog.NewClient(cfg.FiasNalog),
 		fileFetcher:           filefetcher.NewClient(cfg.FileFetcher, log),
 		healthyInstancesCount: atomic.NewUint32(0),
-		instanceMap:           newConcurrentInstanceMap(),
+		instanceMap:           util.NewConcurrentInstanceMap(),
 		wal:                   wal,
 		fileTypeDownloading:   cfg.StartFrom.FileType,
 	}
@@ -136,36 +137,36 @@ func New(ctx context.Context, cfg Config, reg prometheus.Registerer, log gklog.L
 	return d, nil
 }
 
-func newRingAndLifecycler(ringCfg DownloaderRingConfig, instanceCount *atomic.Uint32, instances *concurrentInstanceMap, logger gklog.Logger, reg prometheus.Registerer) (*ring.Ring, *ring.BasicLifecycler, error) {
+func newRingAndLifecycler(ringCfg DownloaderRingConfig, instanceCount *atomic.Uint32, instances *util.ConcurrentInstanceMap, logger gklog.Logger, reg prometheus.Registerer) (*ring.Ring, *ring.BasicLifecycler, error) {
 	reg = prometheus.WrapRegistererWithPrefix("charon_", reg)
 	kvStore, err := kv.NewClient(ringCfg.KVStore, ring.GetCodec(), kv.RegistererWithKVName(reg, "downloader-lifecycler"), logger)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "failed to initialize downloader' KV store")
 	}
 
-	lifecyclerCfg, err := ringCfg.ToBasicLifecyclerConfig(logger)
+	lifecyclerCfg, err := ringCfg.toBasicLifecyclerConfig(logger)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "failed to build downloader' lifecycler config")
 	}
 
 	var delegate ring.BasicLifecyclerDelegate
 	delegate = ring.NewInstanceRegisterDelegate(ring.ACTIVE, lifecyclerCfg.NumTokens)
-	delegate = newHealthyInstanceDelegate(instanceCount, lifecyclerCfg.HeartbeatTimeout, delegate)
-	delegate = newInstanceListDelegate(instances, delegate)
+	delegate = util.NewHealthyInstanceDelegate(instanceCount, lifecyclerCfg.HeartbeatTimeout, delegate)
+	delegate = util.NewInstanceListDelegate(instances, delegate)
 	delegate = ring.NewLeaveOnStoppingDelegate(delegate, logger)
-	delegate = newAutoMarkUnhealthyDelegate(ringAutoMarkUnhealthyPeriods*lifecyclerCfg.HeartbeatTimeout, delegate, logger)
+	delegate = util.NewAutoMarkUnhealthyDelegate(ringAutoMarkUnhealthyPeriods*lifecyclerCfg.HeartbeatTimeout, delegate, logger)
 
-	distributorsLifecycler, err := ring.NewBasicLifecycler(lifecyclerCfg, "downloader", downloaderRingKey, kvStore, delegate, logger, reg)
+	downloadersLifecycler, err := ring.NewBasicLifecycler(lifecyclerCfg, "downloader", downloaderRingKey, kvStore, delegate, logger, reg)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "failed to initialize downloaders' lifecycler")
 	}
 
-	distributorsRing, err := ring.New(ringCfg.toRingConfig(), "downloader", downloaderRingKey, logger, reg)
+	downloadersRing, err := ring.New(ringCfg.toRingConfig(), "downloader", downloaderRingKey, logger, reg)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "failed to initialize downloaders' ring client")
 	}
 
-	return distributorsRing, distributorsLifecycler, nil
+	return downloadersRing, downloadersLifecycler, nil
 }
 
 func (d *Downloader) start(ctx context.Context) error {
@@ -229,8 +230,8 @@ func (d *Downloader) start(ctx context.Context) error {
 		return err
 	}
 
-	lostRec, found := lo.Find(recs, func(item *walrecord.Record) bool {
-		return item.DownloaderID == d.cfg.InstanceID && item.Status == walrecord.PROCESSING
+	lostRec, found := lo.Find(recs, func(item *walrec.Record) bool {
+		return item.DownloaderID == d.cfg.InstanceID && item.Status == walrec.PROCESSING
 	})
 	if found {
 		level.Debug(d.log).Log("msg", "found lost download record")
@@ -328,7 +329,7 @@ func (d *Downloader) run(ctx context.Context) error {
 		return nil
 	}
 
-	if err := d.diffStoreWriter.Store(ctx, d.currRec.Version, file); err != nil {
+	if err := d.diffStoreWriter.Store(ctx, d.currRec.Version, d.currRec.Type, file); err != nil {
 		level.Error(d.log).Log("msg", err.Error())
 		if err := d.unlockWALWithRollback(ctx); err != nil {
 			return err
@@ -346,7 +347,7 @@ func (d *Downloader) run(ctx context.Context) error {
 		return nil
 	}
 
-	d.currRec.Status = walrecord.COMPLETED
+	d.currRec.Status = walrec.COMPLETED
 	if err := d.wal.UpdateRecord(ctx, d.currRec); err != nil {
 		level.Error(d.log).Log("msg", err.Error())
 		return nil
@@ -364,7 +365,7 @@ func (d *Downloader) run(ctx context.Context) error {
 func (d *Downloader) stealWALRecord(ctx context.Context) error {
 	level.Debug(d.log).Log("msg", "trying to steal wal record from unhealthy members")
 
-	recs, err := d.wal.GetRecordsByStatus(ctx, walrecord.PROCESSING)
+	recs, err := d.wal.GetRecordsByStatus(ctx, walrec.PROCESSING)
 	if err != nil {
 		return errors.Wrap(err, "steal wal record")
 	}
@@ -378,7 +379,7 @@ func (d *Downloader) stealWALRecord(ctx context.Context) error {
 				}
 
 				if !healthy {
-					rec, found := lo.Find(recs, func(item *walrecord.Record) bool {
+					rec, found := lo.Find(recs, func(item *walrec.Record) bool {
 						return item.DownloaderID == dID
 					})
 					if found {
@@ -410,7 +411,7 @@ func (d *Downloader) leaseWALRecord(ctx context.Context) error {
 	return nil
 }
 
-func (d *Downloader) getWALRecordToProcess(ctx context.Context) (*walrecord.Record, error) {
+func (d *Downloader) getWALRecordToProcess(ctx context.Context) (*walrec.Record, error) {
 	fInfos, err := d.fiasNalogClient.GetAllDownloadFileInfo(ctx)
 	if err != nil {
 		return nil, err
@@ -425,7 +426,7 @@ func (d *Downloader) getWALRecordToProcess(ctx context.Context) (*walrecord.Reco
 		if !found {
 			if len(fInfos) > 0 {
 				fInfo := fInfos[0]
-				return walrecord.New(fInfo.VersionID, d.cfg.InstanceID, fInfo.GARXMLFullURL, wal.FileTypeFull, walrecord.PROCESSING), nil
+				return walrec.New(fInfo.VersionID, d.cfg.InstanceID, fInfo.GARXMLFullURL, wal.FileTypeFull), nil
 			}
 
 			return nil, errors.New("no file infos available")
@@ -437,11 +438,11 @@ func (d *Downloader) getWALRecordToProcess(ctx context.Context) (*walrecord.Reco
 		return nil, err
 	}
 
-	lastSentVer := lo.Max(lo.FilterMap(recs, func(item *walrecord.Record, index int) (int, bool) {
-		return item.Version, item.Status == walrecord.SENT
+	lastSentVer := lo.Max(lo.FilterMap(recs, func(item *walrec.Record, index int) (int, bool) {
+		return item.Version, item.Status == walrec.SENT
 	}))
 
-	avlRecs := lo.FilterMap(recs, func(item *walrecord.Record, index int) (int, bool) {
+	avlRecs := lo.FilterMap(recs, func(item *walrec.Record, index int) (int, bool) {
 		return item.Version, item.Version > lastSentVer
 	})
 
@@ -455,7 +456,7 @@ func (d *Downloader) getWALRecordToProcess(ctx context.Context) (*walrecord.Reco
 			return item.VersionID == firstAvlVer
 		})
 		if found {
-			return walrecord.New(info.VersionID, d.cfg.InstanceID, info.GARXMLDeltaURL, wal.FileTypeDiff, walrecord.PROCESSING), nil
+			return walrec.New(info.VersionID, d.cfg.InstanceID, info.GARXMLDeltaURL, wal.FileTypeDiff), nil
 		}
 
 		return nil, errors.New(fmt.Sprintf("cannot find download info for version: %d", firstAvlVer))

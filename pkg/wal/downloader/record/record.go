@@ -14,12 +14,12 @@ type Record struct {
 	Status       string
 }
 
-func New(version int, downloaderID string, url string, typ string, status string) *Record {
+func New(version int, downloaderID string, url string, typ string) *Record {
 	return &Record{
 		Version:      version,
 		DownloaderID: downloaderID,
 		DownloadURL:  url,
 		Type:         typ,
-		Status:       status,
+		Status:       PROCESSING,
 	}
 }

@@ -1,4 +1,4 @@
-package downloader
+package processor
 
 import (
 	"github.com/ValerySidorin/charon/pkg/util"
@@ -7,11 +7,12 @@ import (
 	"github.com/grafana/dskit/ring"
 )
 
-type DownloaderRingConfig struct {
+type ProcessorRingConfig struct {
+	Key                   string `yaml:"key"`
 	util.CommonRingConfig `yaml:",inline"`
 }
 
-func (cfg *DownloaderRingConfig) toBasicLifecyclerConfig(logger log.Logger) (ring.BasicLifecyclerConfig, error) {
+func (cfg *ProcessorRingConfig) toBasicLifecyclerConfig(logger log.Logger) (ring.BasicLifecyclerConfig, error) {
 	return ring.BasicLifecyclerConfig{
 		ID:                              cfg.InstanceID,
 		HeartbeatPeriod:                 cfg.HeartbeatPeriod,
@@ -22,7 +23,7 @@ func (cfg *DownloaderRingConfig) toBasicLifecyclerConfig(logger log.Logger) (rin
 	}, nil
 }
 
-func (cfg *DownloaderRingConfig) toRingConfig() ring.Config {
+func (cfg *ProcessorRingConfig) toRingConfig() ring.Config {
 	rc := ring.Config{}
 	flagext.DefaultValues(&rc)
 

@@ -4,10 +4,10 @@ import (
 	"context"
 	"fmt"
 	"sort"
-	"strconv"
 	"time"
 
 	"github.com/ValerySidorin/charon/pkg/queue"
+	"github.com/ValerySidorin/charon/pkg/queue/message"
 	walconfig "github.com/ValerySidorin/charon/pkg/wal/config"
 	wal "github.com/ValerySidorin/charon/pkg/wal/downloader"
 	walrecord "github.com/ValerySidorin/charon/pkg/wal/downloader/record"
@@ -34,12 +34,12 @@ type Notifier struct {
 
 	downloaderID string
 
-	queuePublisher queue.Publisher
-	wal            *wal.WAL
+	pub queue.Publisher
+	wal *wal.WAL
 }
 
 func New(ctx context.Context, cfg Config, walcfg walconfig.Config, downloaderID string, log log.Logger) (*Notifier, error) {
-	publisher, err := queue.NewPublisher(cfg.Queue, log)
+	pub, err := queue.NewPublisher(cfg.Queue, log)
 	if err != nil {
 		return nil, errors.Wrap(err, "notifier connect to queue")
 	}
@@ -50,11 +50,11 @@ func New(ctx context.Context, cfg Config, walcfg walconfig.Config, downloaderID 
 	}
 
 	n := &Notifier{
-		cfg:            cfg,
-		log:            log,
-		downloaderID:   downloaderID,
-		queuePublisher: publisher,
-		wal:            wal,
+		cfg:          cfg,
+		log:          log,
+		downloaderID: downloaderID,
+		pub:          pub,
+		wal:          wal,
 	}
 
 	n.Service = services.NewTimerService(n.cfg.CheckInterval, nil, n.run, nil)
@@ -93,7 +93,7 @@ func (n *Notifier) run(ctx context.Context) error {
 	}
 
 	for _, rec := range recs {
-		if rec.DownloaderID != n.downloaderID {
+		if rec.DownloaderID != n.downloaderID || rec.Status != walrecord.COMPLETED {
 			if err := n.wal.Unlock(ctx, true); err != nil {
 				return err
 			}
@@ -102,7 +102,7 @@ func (n *Notifier) run(ctx context.Context) error {
 		}
 
 		msg := getMsg(rec)
-		if err := n.queuePublisher.Publish(channelName, msg); err != nil {
+		if err := n.pub.Pub(channelName, msg); err != nil {
 			level.Error(n.log).Log("msg", err.Error())
 			if err := n.wal.Unlock(ctx, false); err != nil {
 				return err
@@ -129,6 +129,9 @@ func (n *Notifier) run(ctx context.Context) error {
 	return nil
 }
 
-func getMsg(rec *walrecord.Record) string {
-	return strconv.Itoa(rec.Version) + "_" + rec.Type
+func getMsg(rec *walrecord.Record) *message.Message {
+	return &message.Message{
+		Version: rec.Version,
+		Type:    rec.Type,
+	}
 }
