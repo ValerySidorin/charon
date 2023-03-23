@@ -2,8 +2,11 @@ package minio
 
 import (
 	"context"
+	"fmt"
 	"io"
+	"path/filepath"
 	"strconv"
+	"strings"
 
 	util_io "github.com/ValerySidorin/charon/pkg/util/io"
 	"github.com/minio/minio-go/v7"
@@ -34,9 +37,12 @@ type MinioWriter struct {
 }
 
 func NewReader(cfg Config, bucket string) (*MinioReader, error) {
-	minioClient, err := minio.New("localhost:9000", &minio.Options{})
+	minioClient, err := minio.New(cfg.Endpoint, &minio.Options{
+		Creds:  credentials.NewStaticV4(cfg.MinioRootUser, cfg.MinioRootPassword, ""),
+		Secure: cfg.Secure,
+	})
 	if err != nil {
-		return nil, errors.Wrap(err, "initialize minio reader")
+		return nil, errors.Wrap(err, "initialize minio client for reader")
 	}
 
 	return &MinioReader{
@@ -83,11 +89,11 @@ func (c *MinioReader) Retrieve(ctx context.Context, objName string) (io.ReadClos
 	return obj, nil
 }
 
-func (c *MinioReader) RetrieveObjNamesByVersion(ctx context.Context, version int) ([]string, error) {
+func (c *MinioReader) RetrieveObjNamesByVersion(ctx context.Context, version int, typ string) ([]string, error) {
 	var opts minio.ListObjectsOptions
 	opts.Set("x-minio-extract", "true")
 	opts.Recursive = true
-	opts.Prefix = ArchiveName
+	opts.Prefix = fmt.Sprintf("%d%s%s.zip%s", version, Delimiter, typ, Delimiter)
 
 	result := make([]string, 0)
 	for obj := range c.client.ListObjects(ctx, c.bucket, opts) {
@@ -97,13 +103,13 @@ func (c *MinioReader) RetrieveObjNamesByVersion(ctx context.Context, version int
 	return result, nil
 }
 
-func (c *MinioWriter) Store(ctx context.Context, version int, r io.Reader) error {
+func (c *MinioWriter) Store(ctx context.Context, version int, typ string, r io.Reader) error {
 	size, err := util_io.TryGetSize(r)
 	if err != nil {
 		return errors.Wrap(err, "store minio object")
 	}
 
-	objName := strconv.Itoa(version) + Delimiter + ArchiveName
+	objName := strconv.Itoa(version) + Delimiter + typ + ".zip"
 	_, err = c.client.PutObject(ctx, c.bucket, objName, r, size, minio.PutObjectOptions{
 		ContentType: "application/x-zip-compressed",
 	})
@@ -114,16 +120,19 @@ func (c *MinioWriter) Store(ctx context.Context, version int, r io.Reader) error
 	return nil
 }
 
-func (c *MinioWriter) ListVersions(ctx context.Context) ([]int, error) {
-	versions := make([]int, 0)
-	for obj := range c.client.ListObjects(ctx, c.bucket, minio.ListObjectsOptions{}) {
-		version, err := strconv.Atoi(obj.Key[:len(obj.Key)-1])
-		if err != nil {
-			return nil, errors.Wrap(err, "get latest diff version minio")
+func (c *MinioReader) ListVersionsWithTypes(ctx context.Context) ([]string, error) {
+	keys := make([]string, 0)
+	for obj := range c.client.ListObjects(ctx, c.bucket, minio.ListObjectsOptions{
+		Recursive: true,
+	}) {
+		tokens := strings.Split(obj.Key, Delimiter)
+		if len(tokens) != 2 {
+			return nil, errors.New("invalid object")
 		}
-
-		versions = append(versions, version)
+		ver := tokens[0]
+		typ := strings.TrimSuffix(tokens[1], filepath.Ext(tokens[1]))
+		keys = append(keys, fmt.Sprintf("%s_%s", ver, typ))
 	}
 
-	return versions, nil
+	return keys, nil
 }

@@ -8,19 +8,23 @@ import (
 	"github.com/ValerySidorin/charon/pkg/diffstore/minio"
 )
 
+const (
+	Bucket = "charondiffstore"
+)
+
 type Config struct {
 	Store string       `yaml:"store"`
 	Minio minio.Config `yaml:"minio"`
 }
 
 type Writer interface {
-	Store(ctx context.Context, version int, r io.Reader) error
-	ListVersions(ctx context.Context) ([]int, error)
+	Store(ctx context.Context, version int, typ string, r io.Reader) error
 }
 
 type Reader interface {
 	Retrieve(ctx context.Context, objName string) (io.ReadCloser, error)
-	RetrieveObjNamesByVersion(ctx context.Context, version int) ([]string, error)
+	RetrieveObjNamesByVersion(ctx context.Context, version int, typ string) ([]string, error)
+	ListVersionsWithTypes(ctx context.Context) ([]string, error)
 }
 
 func NewReader(cfg Config, bucket string) (Reader, error) {

@@ -25,8 +25,13 @@ func NewWALStore(ctx context.Context, cfg pg.Config, log log.Logger) (*Store, er
 		return nil, errors.Wrap(err, "pg wal store init conn")
 	}
 
-	q := `create table if not exists public.downloader_wal 
-	(version integer not null, downloader_id text not null, download_url text not null, type text not null, status text not null);`
+	q := `create table if not exists public.downloader_wal (
+		version integer not null, 
+		downloader_id text not null, 
+		download_url text not null, 
+		type text not null, 
+		status text not null,
+		constraint unique_version unique (version));`
 	if _, err := conn.Exec(ctx, q); err != nil {
 		return nil, errors.Wrap(err, "pg wal store init wal table")
 	}
@@ -253,11 +258,12 @@ func (s *Store) UpdateRecord(ctx context.Context, rec *record.Record) error {
 	q := `update downloader_wal
 	set downloader_id = $2,
 	download_url = $3,
-	status = $4
+	type = $4,
+	status = $5
 	where version = $1;`
 
 	if s.currTx != nil {
-		_, err := s.currTx.Exec(ctx, q, rec.Version, rec.DownloaderID, rec.DownloadURL, rec.Status)
+		_, err := s.currTx.Exec(ctx, q, rec.Version, rec.DownloaderID, rec.DownloadURL, rec.Type, rec.Status)
 		if err != nil {
 			return errors.Wrap(err, "pg wal store update record")
 		}
@@ -265,7 +271,7 @@ func (s *Store) UpdateRecord(ctx context.Context, rec *record.Record) error {
 		return nil
 	}
 
-	_, err := s.conn.Exec(ctx, q, rec.Version, rec.DownloaderID, rec.DownloadURL, rec.Status)
+	_, err := s.conn.Exec(ctx, q, rec.Version, rec.DownloaderID, rec.DownloadURL, rec.Type, rec.Status)
 	if err != nil {
 		return errors.Wrap(err, "pg wal store update record")
 	}
