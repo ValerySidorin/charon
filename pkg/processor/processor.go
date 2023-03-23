@@ -2,7 +2,6 @@ package processor
 
 import (
 	"context"
-	"fmt"
 	"sort"
 	"time"
 
@@ -12,7 +11,6 @@ import (
 	"github.com/ValerySidorin/charon/pkg/util"
 	walcfg "github.com/ValerySidorin/charon/pkg/wal/config"
 	wal "github.com/ValerySidorin/charon/pkg/wal/processor"
-	"github.com/ValerySidorin/charon/pkg/wal/processor/record"
 	gklog "github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/grafana/dskit/kv"
@@ -59,7 +57,7 @@ type Processor struct {
 	subservices           *services.Manager
 
 	workerPool *pool.Pool
-	msgCh      chan *message.Message
+	persister  *persister
 
 	diffStoreReader diffstore.Reader
 	sub             queue.Subscriber
@@ -85,6 +83,8 @@ func New(ctx context.Context, cfg Config, reg prometheus.Registerer, log gklog.L
 		return nil, errors.Wrap(err, "processor connect to diff store")
 	}
 
+	persister, err := newPersister(ctx, cfg, log)
+
 	p := Processor{
 		cfg: cfg,
 		log: log,
@@ -94,7 +94,7 @@ func New(ctx context.Context, cfg Config, reg prometheus.Registerer, log gklog.L
 		workerPool:            pool.New().WithMaxGoroutines(cfg.WorkerPool),
 
 		diffStoreReader: reader,
-		msgCh:           make(chan *message.Message, cfg.MsgBuffer),
+		persister:       persister,
 		sub:             sub,
 		wal:             wal,
 	}
@@ -177,16 +177,16 @@ func (p *Processor) start(ctx context.Context) error {
 	})
 
 	for _, m := range msgs {
-		p.msgCh <- m
+		p.persister.enqueue(m)
 	}
 
 	if err := p.sub.Sub(channelName, func(msg *message.Message) {
-		p.msgCh <- msg
+		p.persister.enqueue(msg)
 	}); err != nil {
 		return errors.Wrap(err, "sub")
 	}
 
-	go p.persistMsgsToWAL(ctx)
+	go p.persister.start(ctx)
 
 	return nil
 }
@@ -194,56 +194,4 @@ func (p *Processor) start(ctx context.Context) error {
 func (p *Processor) stop(err error) error {
 	level.Error(p.log).Log("msg", err.Error())
 	return nil
-}
-
-func (p *Processor) persistMsgsToWAL(ctx context.Context) {
-	for msg := range p.msgCh {
-
-		tryCount := 0
-		processed := false
-
-		for !processed {
-			// We should crush if message can not be persisted
-			// due to the fact, that all of them MUST be processed
-			// sequentially and ordered
-			if tryCount > persistMsgTryCount {
-				panic("can't persist received message")
-			}
-			objs, err := p.diffStoreReader.RetrieveObjNamesByVersion(ctx, msg.Version, msg.Type)
-			if err != nil {
-				level.Error(p.log).Log("msg", err.Error())
-				tryCount++
-				continue
-			}
-			recs := lo.Map(objs, func(item string, index int) *record.Record {
-				return record.New(msg.Version, item, msg.Type)
-			})
-
-			if err := p.wal.Lock(ctx); err != nil {
-				level.Error(p.log).Log("msg", err.Error())
-				if rbErr := p.wal.Unlock(ctx, false); rbErr != nil {
-					level.Error(p.log).Log("msg", rbErr.Error())
-					tryCount++
-					continue
-				}
-			}
-
-			if err := p.wal.MergeRecords(ctx, recs); err != nil {
-				if rbErr := p.wal.Unlock(ctx, false); rbErr != nil {
-					level.Error(p.log).Log("msg", rbErr.Error())
-					tryCount++
-					continue
-				}
-			}
-
-			if err := p.wal.Unlock(ctx, true); err != nil {
-				level.Error(p.log).Log("msg", err.Error())
-				tryCount++
-				continue
-			}
-
-			level.Debug(p.log).Log("msg", fmt.Sprintf("successfully persisted message: %s", msg.String()))
-			processed = true
-		}
-	}
 }
