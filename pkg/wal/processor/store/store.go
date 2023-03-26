@@ -17,6 +17,8 @@ type Store interface {
 	UpdateRecord(ctx context.Context, rec *record.Record) error
 	GetRecordsByVersion(ctx context.Context, version int) ([]*record.Record, error)
 	GetLastVersion(ctx context.Context) (int, error)
+	GetFirstIncompleteVersion(ctx context.Context) (int, error)
+	GetIncompleteRecordsByVersion(ctx context.Context, version int) ([]*record.Record, error)
 }
 
 func NewWALStore(ctx context.Context, cfg config.Config, log log.Logger) (Store, error) {

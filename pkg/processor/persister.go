@@ -47,7 +47,9 @@ func (p *persister) enqueue(msg *message.Message) {
 	p.msgCh <- msg
 }
 
-func (p *persister) start(ctx context.Context) {
+func (p *persister) start(ctx context.Context, callback func()) {
+	callback()
+
 	for msg := range p.msgCh {
 
 		tryCount := 0
@@ -96,5 +98,7 @@ func (p *persister) start(ctx context.Context) {
 			level.Debug(p.log).Log("msg", fmt.Sprintf("persister: successfully persisted message: %s", msg.String()))
 			processed = true
 		}
+
+		callback()
 	}
 }
