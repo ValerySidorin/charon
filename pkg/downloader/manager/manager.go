@@ -1,4 +1,4 @@
-package filefetcher
+package manager
 
 import (
 	"fmt"
@@ -18,28 +18,22 @@ const (
 	FileName = "gar.zip"
 )
 
-type Config struct {
-	BufferSize int `yaml:"buffer_size"`
-}
-
-type FileFetcher struct {
+type Manager struct {
 	grabClient *grab.Client
-	cfg        Config
 	log        log.Logger
 }
 
-func NewClient(cfg Config, log log.Logger) *FileFetcher {
+func New(bufferSize int, log log.Logger) *Manager {
 	c := grab.NewClient()
-	c.BufferSize = cfg.BufferSize
+	c.BufferSize = bufferSize
 
-	return &FileFetcher{
+	return &Manager{
 		grabClient: c,
-		cfg:        cfg,
 		log:        log,
 	}
 }
 
-func (f *FileFetcher) Download(path string, version int, url string) error {
+func (f *Manager) Download(path string, version int, url string) error {
 	versionStr := strconv.Itoa(version)
 	if err := cleanPrevDownload(path, versionStr); err != nil {
 		return err
