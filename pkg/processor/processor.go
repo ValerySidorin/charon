@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/ValerySidorin/charon/pkg/diffstore"
+	"github.com/ValerySidorin/charon/pkg/processor/plugin"
 	"github.com/ValerySidorin/charon/pkg/queue"
 	"github.com/ValerySidorin/charon/pkg/queue/message"
 	"github.com/ValerySidorin/charon/pkg/util"
@@ -19,7 +20,6 @@ import (
 	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/samber/lo"
-	"github.com/sourcegraph/conc/pool"
 	"go.uber.org/atomic"
 )
 
@@ -41,6 +41,7 @@ type Config struct {
 	Queue          queue.Config        `yaml:"queue"`
 	DiffStore      diffstore.Config    `yaml:"diff_store"`
 	WAL            walcfg.Config       `yaml:"wal"`
+	Plugin         plugin.Config       `yaml:"plugin"`
 }
 
 type Processor struct {
@@ -56,8 +57,8 @@ type Processor struct {
 	healthyInstancesCount *atomic.Uint32
 	subservices           *services.Manager
 
-	workerPool *pool.Pool
-	persister  *persister
+	persister *persister
+	importer  *importer
 
 	diffStoreReader diffstore.Reader
 	sub             queue.Subscriber
@@ -84,6 +85,9 @@ func New(ctx context.Context, cfg Config, reg prometheus.Registerer, log gklog.L
 	}
 
 	persister, err := newPersister(ctx, cfg, log)
+	if err != nil {
+		return nil, errors.Wrap(err, "processor: init persister")
+	}
 
 	p := Processor{
 		cfg: cfg,
@@ -91,7 +95,6 @@ func New(ctx context.Context, cfg Config, reg prometheus.Registerer, log gklog.L
 
 		instanceMap:           util.NewConcurrentInstanceMap(),
 		healthyInstancesCount: atomic.NewUint32(0),
-		workerPool:            pool.New().WithMaxGoroutines(cfg.WorkerPool),
 
 		diffStoreReader: reader,
 		persister:       persister,
@@ -113,8 +116,13 @@ func New(ctx context.Context, cfg Config, reg prometheus.Registerer, log gklog.L
 	}
 
 	p.subservices = manager
-	p.processorsLifecycler = processorsLifecycler
-	p.processorsRing = processorsRing
+
+	importer, err := newImporter(ctx, processorsRing, processorsLifecycler, p.instanceMap, p.healthyInstancesCount, cfg, log)
+	if err != nil {
+		return nil, errors.Wrap(err, "processor: init importer")
+	}
+
+	p.importer = importer
 
 	return &p, nil
 }
@@ -186,7 +194,9 @@ func (p *Processor) start(ctx context.Context) error {
 		return errors.Wrap(err, "sub")
 	}
 
-	go p.persister.start(ctx)
+	go p.persister.start(ctx, func() {
+		p.importer.notify(ctx)
+	})
 
 	return nil
 }

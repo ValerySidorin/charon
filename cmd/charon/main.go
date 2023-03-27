@@ -97,7 +97,7 @@ notifier:
 
 func testProcessors() {
 	conf := `
-worker_pool: 2
+worker_pool: 1
 msg_buffer: 100
 ring:
   key: mock_processor
@@ -124,6 +124,8 @@ wal:
 queue:
   type: nats
   conn: nats://charon:charonpwd@localhost:4222
+plugin:
+  mock: mock
 `
 
 	cfg := processor.Config{}
@@ -140,6 +142,20 @@ queue:
 		os.Exit(1)
 	}
 
+	cfg2 := cfg
+	cfg2.ProcessorsRing.InstanceID = "processor_2"
+
+	p2, err := processor.New(ctx, cfg2, prometheus.NewPedanticRegistry(), log.NewLogfmtLogger(os.Stdout))
+	if err != nil {
+		fmt.Println(err.Error())
+		os.Exit(1)
+	}
+
 	p.StartAsync(ctx)
+	p2.StartAsync(ctx)
 	p.AwaitRunning(ctx)
+	p2.AwaitRunning(ctx)
+
+	fmt.Println(p.State().String())
+	fmt.Println(p2.State().String())
 }

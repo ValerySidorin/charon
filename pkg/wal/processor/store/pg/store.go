@@ -22,7 +22,7 @@ type Store struct {
 func NewWALStore(ctx context.Context, cfg pg.Config, log log.Logger) (*Store, error) {
 	conn, err := pgx.Connect(ctx, cfg.Conn)
 	if err != nil {
-		return nil, errors.Wrap(err, "pg processor wal store init conn")
+		return nil, errors.Wrap(err, "postgres: init connection")
 	}
 
 	q := `create table if not exists public.processor_wal (
@@ -34,7 +34,7 @@ func NewWALStore(ctx context.Context, cfg pg.Config, log log.Logger) (*Store, er
 		status text not null,
 		constraint unique_obj_name unique (obj_name));`
 	if _, err := conn.Exec(ctx, q); err != nil {
-		return nil, errors.Wrap(err, "pg wal store init processor wal table")
+		return nil, errors.Wrap(err, "postgres: init table")
 	}
 
 	return &Store{
@@ -46,11 +46,11 @@ func NewWALStore(ctx context.Context, cfg pg.Config, log log.Logger) (*Store, er
 
 func (s *Store) BeginTransaction(ctx context.Context) error {
 	if s.currTx != nil {
-		return errors.New("pg wal store s.currTx is not null")
+		return errors.New("postgres: current transaction is not nil")
 	}
 	t, err := s.conn.Begin(ctx)
 	if err != nil {
-		return errors.Wrap(err, "pg processor wal store begin transation")
+		return errors.Wrap(err, "postgres: begin transaction")
 	}
 	s.currTx = t
 	return nil
@@ -62,7 +62,7 @@ func (s *Store) RollbackTransaction(ctx context.Context) error {
 	}
 
 	if err := s.currTx.Rollback(ctx); err != nil {
-		return errors.Wrap(err, "pg processor wal store rollback transaction")
+		return errors.Wrap(err, "postgres: rollback transaction")
 	}
 
 	s.currTx = nil
@@ -75,7 +75,7 @@ func (s *Store) CommitTransaction(ctx context.Context) error {
 	}
 
 	if err := s.currTx.Commit(ctx); err != nil {
-		return errors.Wrap(err, "pg processor wal store commit transaction")
+		return errors.Wrap(err, "postgres: commit transaction")
 	}
 
 	s.currTx = nil
@@ -84,13 +84,13 @@ func (s *Store) CommitTransaction(ctx context.Context) error {
 
 func (s *Store) LockAllRecords(ctx context.Context) error {
 	if s.currTx == nil {
-		return errors.New("pg processor wal store can't lock table without transaction")
+		return errors.New("postgres: can not lock table without transaction")
 	}
 
 	q := "lock table processor_wal in access exclusive mode;"
 	_, err := s.currTx.Exec(ctx, q)
 	if err != nil {
-		return errors.Wrap(err, "pg processor wal store lock table")
+		return errors.Wrap(err, "postgres: lock table")
 	}
 
 	return nil
@@ -101,13 +101,13 @@ func (s *Store) MergeRecords(ctx context.Context, recs []*record.Record) error {
 	if s.currTx != nil {
 		_, err := s.currTx.Prepare(ctx, "merge_records", stmt)
 		if err != nil {
-			return errors.Wrap(err, "pg processor wal merge records")
+			return errors.Wrap(err, "postgres: merge records")
 		}
 
 		for _, rec := range recs {
 			_, err := s.currTx.Exec(ctx, "merge_records", rec.Version, rec.ProcessorID, rec.ObjName, rec.Type, rec.Status)
 			if err != nil {
-				return errors.Wrap(err, "pg processor wal insert inside merge")
+				return errors.Wrap(err, "postgres: merge records")
 			}
 		}
 
@@ -116,19 +116,19 @@ func (s *Store) MergeRecords(ctx context.Context, recs []*record.Record) error {
 
 	tx, err := s.conn.Begin(ctx)
 	if err != nil {
-		return errors.Wrap(err, "pg processor wal begin tran")
+		return errors.Wrap(err, "postgres: merge records")
 	}
 	defer tx.Rollback(ctx)
 
 	_, err = tx.Prepare(ctx, "merge_records", stmt)
 	if err != nil {
-		return errors.Wrap(err, "pg processor wal merge records")
+		return errors.Wrap(err, "postgres: merge records")
 	}
 
 	for _, rec := range recs {
 		_, err := s.currTx.Exec(ctx, "merge_records", rec.Version, rec.ProcessorID, rec.ObjName, rec.Type, rec.Status)
 		if err != nil {
-			return errors.Wrap(err, "pg processor wal insert inside merge")
+			return errors.Wrap(err, "postgres: merge records")
 		}
 	}
 
@@ -139,14 +139,14 @@ func (s *Store) UpdateRecord(ctx context.Context, rec *record.Record) error {
 	q := `update processor_wal
 	set version = $1,
 	processor_id = $2,
-	type = $3
+	type = $3,
 	status = $4
 	where obj_name = $5;`
 
 	if s.currTx != nil {
 		_, err := s.currTx.Exec(ctx, q, rec.Version, rec.ProcessorID, rec.Type, rec.Status, rec.ObjName)
 		if err != nil {
-			return errors.Wrap(err, "pg wal store update record")
+			return errors.Wrap(err, "postgres: update record")
 		}
 
 		return nil
@@ -154,7 +154,7 @@ func (s *Store) UpdateRecord(ctx context.Context, rec *record.Record) error {
 
 	_, err := s.conn.Exec(ctx, q, rec.Version, rec.ProcessorID, rec.Type, rec.Status, rec.ObjName)
 	if err != nil {
-		return errors.Wrap(err, "pg wal store update record")
+		return errors.Wrap(err, "postgres: update record")
 	}
 
 	return nil
@@ -167,14 +167,14 @@ func (s *Store) GetRecordsByVersion(ctx context.Context, version int) ([]*record
 	if s.currTx != nil {
 		rows, err := s.currTx.Query(ctx, q, version)
 		if err != nil {
-			return nil, errors.Wrap(err, "pg wal store query records by version")
+			return nil, errors.Wrap(err, "postgres: get records by version")
 		}
 		defer rows.Close()
 
 		for rows.Next() {
 			rec := record.Record{}
 			if err := scanRecordFromRows(rows, &rec); err != nil {
-				return nil, errors.Wrap(err, "pg wal store scan records by version")
+				return nil, err
 			}
 			recs = append(recs, &rec)
 		}
@@ -184,14 +184,14 @@ func (s *Store) GetRecordsByVersion(ctx context.Context, version int) ([]*record
 
 	rows, err := s.conn.Query(ctx, q)
 	if err != nil {
-		return nil, errors.Wrap(err, "pg wal store query records by version")
+		return nil, errors.Wrap(err, "postgres: get records by version")
 	}
 	defer rows.Close()
 
 	for rows.Next() {
 		rec := record.Record{}
 		if err := scanRecordFromRows(rows, &rec); err != nil {
-			return nil, errors.Wrap(err, "pg wal store scan records by version")
+			return nil, err
 		}
 		recs = append(recs, &rec)
 	}
@@ -206,7 +206,7 @@ func (s *Store) GetLastVersion(ctx context.Context) (int, error) {
 	if s.currTx != nil {
 		err := s.currTx.QueryRow(ctx, q).Scan(&id)
 		if err != nil {
-			return 0, errors.Wrap(err, "pg processor wal store get last version")
+			return 0, errors.Wrap(err, "postgres: get last version")
 		}
 
 		if !id.Valid {
@@ -218,7 +218,7 @@ func (s *Store) GetLastVersion(ctx context.Context) (int, error) {
 
 	err := s.conn.QueryRow(ctx, q).Scan(&id)
 	if err != nil {
-		return 0, errors.Wrap(err, "pg processor wal store get last version")
+		return 0, errors.Wrap(err, "postgres: get last version")
 	}
 
 	if !id.Valid {
@@ -228,23 +228,94 @@ func (s *Store) GetLastVersion(ctx context.Context) (int, error) {
 	return int(id.Int64), nil
 }
 
+func (s *Store) GetFirstIncompleteVersion(ctx context.Context) (int, error) {
+	q := `select min(version) from processor_wal where status != 'COMPLETED';`
+	var id sql.NullInt64
+
+	if s.currTx != nil {
+		err := s.currTx.QueryRow(ctx, q).Scan(&id)
+		if err != nil {
+			return 0, errors.Wrap(err, "postgres: get first incomplete version")
+		}
+
+		if !id.Valid {
+			return 0, nil
+		}
+
+		return int(id.Int64), nil
+	}
+
+	err := s.conn.QueryRow(ctx, q).Scan(&id)
+	if err != nil {
+		return 0, errors.Wrap(err, "postgres: get last version")
+	}
+
+	if !id.Valid {
+		return 0, nil
+	}
+
+	return int(id.Int64), nil
+}
+
+func (s *Store) GetIncompleteRecordsByVersion(ctx context.Context, version int) ([]*record.Record, error) {
+	q := `select 
+version, processor_id, obj_name, type, status
+from processor_wal
+where version = $1 and status != 'COMPLETED'`
+	recs := make([]*record.Record, 0)
+
+	if s.currTx != nil {
+		rows, err := s.currTx.Query(ctx, q, version)
+		if err != nil {
+			return nil, errors.Wrap(err, "postgres: get incomplete records by version")
+		}
+		defer rows.Close()
+
+		for rows.Next() {
+			rec := record.Record{}
+			if err := scanRecordFromRows(rows, &rec); err != nil {
+				return nil, err
+			}
+			recs = append(recs, &rec)
+		}
+
+		return recs, nil
+	}
+
+	rows, err := s.conn.Query(ctx, q, version)
+	if err != nil {
+		return nil, errors.Wrap(err, "postgres: get incomplete records by version")
+	}
+	defer rows.Close()
+
+	for rows.Next() {
+		rec := record.Record{}
+		if err := scanRecordFromRows(rows, &rec); err != nil {
+			return nil, err
+		}
+		recs = append(recs, &rec)
+	}
+
+	return recs, nil
+}
+
 func (s *Store) Dispose(ctx context.Context) error {
 	if s.currTx != nil {
 		if err := s.currTx.Rollback(ctx); err != nil {
-			return errors.Wrap(err, "pg wal store rollback transaction")
+			return errors.Wrap(err, "postgres: rollback transaction")
 		}
 	}
 
 	if err := s.conn.Close(ctx); err != nil {
-		return errors.Wrap(err, "pg wal store close connection")
+		return errors.Wrap(err, "postgres: close connection")
 	}
 
 	return nil
 }
 
 func scanRecordFromRows(rows pgx.Rows, rec *record.Record) error {
-	if err := rows.Scan(nil, &rec.Version, &rec.ProcessorID, &rec.ObjName, &rec.Type, &rec.Status); err != nil {
-		return err
+	if err := rows.Scan(&rec.Version, &rec.ProcessorID, &rec.ObjName, &rec.Type, &rec.Status); err != nil {
+		return errors.Wrap(err, "postgres: scan record")
 	}
 
 	return nil
