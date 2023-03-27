@@ -26,11 +26,9 @@ start_from:
   version: 20230314
 polling_interval: 10s
 temp_dir: D://charon/downloader
-fias_nalog: 
-  timeout: 30s
-  retry_max: 5
-file_fetcher:
-  buffer_size: 4096
+timeout: 30s
+retry_max: 5
+buffer_size: 4096
 ring:
   heartbeat_period: 1s
   heartbeat_timeout: 2s
@@ -42,7 +40,7 @@ ring:
       consistentreads: true
       acl_token: charon
     prefix: "charon/"
-diff_store:
+obj_store:
   store: minio
   minio:
     endpoint: "localhost:9000"
@@ -97,7 +95,6 @@ notifier:
 
 func testProcessors() {
 	conf := `
-worker_pool: 1
 msg_buffer: 100
 ring:
   key: mock_processor
@@ -111,7 +108,7 @@ ring:
       consistentreads: true
       acl_token: charon
     prefix: "charon/"
-diff_store:
+obj_store:
   store: minio
   minio:
     endpoint: "localhost:9000"

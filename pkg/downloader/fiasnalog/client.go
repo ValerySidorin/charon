@@ -16,19 +16,14 @@ const (
 	GetLastDownloadFileInfoUrl = "https://fias.nalog.ru/WebServices/Public/GetLastDownloadFileInfo"
 )
 
-type Config struct {
-	Timeout  time.Duration `yaml:"timeout"`
-	RetryMax int           `yaml:"retry_max"`
-}
-
 type Client struct {
 	httpClient *retryablehttp.Client
 }
 
-func NewClient(cfg Config) *Client {
+func NewClient(retryMax int, timeout time.Duration) *Client {
 	c := retryablehttp.NewClient()
-	c.RetryMax = cfg.RetryMax
-	c.HTTPClient.Timeout = cfg.Timeout
+	c.RetryMax = retryMax
+	c.HTTPClient.Timeout = timeout
 
 	return &Client{
 		httpClient: c,

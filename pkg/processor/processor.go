@@ -5,7 +5,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/ValerySidorin/charon/pkg/diffstore"
+	"github.com/ValerySidorin/charon/pkg/objstore"
 	"github.com/ValerySidorin/charon/pkg/processor/plugin"
 	"github.com/ValerySidorin/charon/pkg/queue"
 	"github.com/ValerySidorin/charon/pkg/queue/message"
@@ -34,12 +34,11 @@ const (
 type Config struct {
 	InstanceID string `yaml:"-"`
 
-	WorkerPool int `yaml:"worker_pool"`
-	MsgBuffer  int `yaml:"msg_buffer"`
+	MsgBuffer int `yaml:"msg_buffer"`
 
 	ProcessorsRing ProcessorRingConfig `yaml:"ring"`
 	Queue          queue.Config        `yaml:"queue"`
-	DiffStore      diffstore.Config    `yaml:"diff_store"`
+	ObjStore       objstore.Config     `yaml:"obj_store"`
 	WAL            walcfg.Config       `yaml:"wal"`
 	Plugin         plugin.Config       `yaml:"plugin"`
 }
@@ -60,9 +59,9 @@ type Processor struct {
 	persister *persister
 	importer  *importer
 
-	diffStoreReader diffstore.Reader
-	sub             queue.Subscriber
-	wal             *wal.WAL
+	objStore objstore.Reader
+	sub      queue.Subscriber
+	wal      *wal.WAL
 }
 
 func New(ctx context.Context, cfg Config, reg prometheus.Registerer, log gklog.Logger) (*Processor, error) {
@@ -79,7 +78,7 @@ func New(ctx context.Context, cfg Config, reg prometheus.Registerer, log gklog.L
 		return nil, errors.Wrap(err, "processor init queue sub")
 	}
 
-	reader, err := diffstore.NewReader(cfg.DiffStore, diffstore.Bucket)
+	reader, err := objstore.NewReader(cfg.ObjStore, objstore.Bucket)
 	if err != nil {
 		return nil, errors.Wrap(err, "processor connect to diff store")
 	}
@@ -96,10 +95,10 @@ func New(ctx context.Context, cfg Config, reg prometheus.Registerer, log gklog.L
 		instanceMap:           util.NewConcurrentInstanceMap(),
 		healthyInstancesCount: atomic.NewUint32(0),
 
-		diffStoreReader: reader,
-		persister:       persister,
-		sub:             sub,
-		wal:             wal,
+		objStore:  reader,
+		persister: persister,
+		sub:       sub,
+		wal:       wal,
 	}
 
 	p.Service = services.NewIdleService(p.start, p.stop)
@@ -165,7 +164,7 @@ func (p *Processor) start(ctx context.Context) error {
 	time.Sleep(beginAfter)
 
 	level.Debug(p.log).Log("msg", "restoring msg queue")
-	strMsgs, err := p.diffStoreReader.ListVersionsWithTypes(ctx)
+	strMsgs, err := p.objStore.ListVersionsWithTypes(ctx)
 	if err != nil {
 		return errors.Wrap(err, "list versions")
 	}

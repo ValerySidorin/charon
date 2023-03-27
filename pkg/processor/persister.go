@@ -4,7 +4,7 @@ import (
 	"context"
 	"fmt"
 
-	"github.com/ValerySidorin/charon/pkg/diffstore"
+	"github.com/ValerySidorin/charon/pkg/objstore"
 	"github.com/ValerySidorin/charon/pkg/queue/message"
 	wal "github.com/ValerySidorin/charon/pkg/wal/processor"
 	"github.com/ValerySidorin/charon/pkg/wal/processor/record"
@@ -18,13 +18,13 @@ type persister struct {
 	cfg Config
 	log log.Logger
 
-	diffStoreReader diffstore.Reader
-	wal             *wal.WAL
-	msgCh           chan *message.Message
+	objStore objstore.Reader
+	wal      *wal.WAL
+	msgCh    chan *message.Message
 }
 
 func newPersister(ctx context.Context, cfg Config, log log.Logger) (*persister, error) {
-	reader, err := diffstore.NewReader(cfg.DiffStore, diffstore.Bucket)
+	reader, err := objstore.NewReader(cfg.ObjStore, objstore.Bucket)
 	if err != nil {
 		return nil, errors.Wrap(err, "persister: connect to diff store")
 	}
@@ -35,11 +35,11 @@ func newPersister(ctx context.Context, cfg Config, log log.Logger) (*persister, 
 	}
 
 	return &persister{
-		cfg:             cfg,
-		log:             log,
-		diffStoreReader: reader,
-		wal:             wal,
-		msgCh:           make(chan *message.Message, cfg.MsgBuffer),
+		cfg:      cfg,
+		log:      log,
+		objStore: reader,
+		wal:      wal,
+		msgCh:    make(chan *message.Message, cfg.MsgBuffer),
 	}, nil
 }
 
@@ -62,7 +62,7 @@ func (p *persister) start(ctx context.Context, callback func()) {
 			if tryCount > persistMsgTryCount {
 				panic("persister: can't persist received message")
 			}
-			objs, err := p.diffStoreReader.RetrieveObjNamesByVersion(ctx, msg.Version, msg.Type)
+			objs, err := p.objStore.RetrieveObjNamesByVersion(ctx, msg.Version, msg.Type)
 			if err != nil {
 				level.Error(p.log).Log("msg", err.Error())
 				tryCount++

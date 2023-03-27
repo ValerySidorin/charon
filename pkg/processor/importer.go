@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"sort"
 
-	"github.com/ValerySidorin/charon/pkg/diffstore"
+	"github.com/ValerySidorin/charon/pkg/objstore"
 	"github.com/ValerySidorin/charon/pkg/processor/plugin"
 	"github.com/ValerySidorin/charon/pkg/util"
 	wal "github.com/ValerySidorin/charon/pkg/wal/processor"
@@ -22,8 +22,8 @@ type importer struct {
 	cfg Config
 	log log.Logger
 
-	wal             *wal.WAL
-	diffStoreReader diffstore.Reader
+	wal      *wal.WAL
+	objStore objstore.Reader
 
 	executing *atomic.Bool
 
@@ -36,7 +36,7 @@ type importer struct {
 }
 
 func newImporter(ctx context.Context, ring *ring.Ring, lifecycler *ring.BasicLifecycler, instanceMap *util.ConcurrentInstanceMap, healthyCnt *atomic.Uint32, cfg Config, log log.Logger) (*importer, error) {
-	reader, err := diffstore.NewReader(cfg.DiffStore, diffstore.Bucket)
+	reader, err := objstore.NewReader(cfg.ObjStore, objstore.Bucket)
 	if err != nil {
 		return nil, errors.Wrap(err, "importer: connect to diff store")
 	}
@@ -55,8 +55,8 @@ func newImporter(ctx context.Context, ring *ring.Ring, lifecycler *ring.BasicLif
 		cfg: cfg,
 		log: log,
 
-		diffStoreReader: reader,
-		wal:             wal,
+		objStore: reader,
+		wal:      wal,
 
 		processorsRing:       ring,
 		processorsLifecycler: lifecycler,
@@ -136,7 +136,6 @@ func (i *importer) handle(ctx context.Context) error {
 							}
 
 							if !healthy {
-								level.Debug(i.log).Log("msg", "stealing record")
 								fRec = r
 								fRec.ProcessorID = i.cfg.InstanceID
 								fRec.Status = record.PROCESSING

@@ -1,15 +1,15 @@
-package diffstore
+package objstore
 
 import (
 	"context"
 	"fmt"
 	"io"
 
-	"github.com/ValerySidorin/charon/pkg/diffstore/minio"
+	"github.com/ValerySidorin/charon/pkg/objstore/minio"
 )
 
 const (
-	Bucket = "charondiffstore"
+	Bucket = "charon"
 )
 
 type Config struct {

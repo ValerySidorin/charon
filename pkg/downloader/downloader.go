@@ -8,10 +8,10 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/ValerySidorin/charon/pkg/diffstore"
+	"github.com/ValerySidorin/charon/pkg/downloader/fiasnalog"
+	"github.com/ValerySidorin/charon/pkg/downloader/manager"
 	"github.com/ValerySidorin/charon/pkg/downloader/notifier"
-	"github.com/ValerySidorin/charon/pkg/fiasnalog"
-	"github.com/ValerySidorin/charon/pkg/filefetcher"
+	"github.com/ValerySidorin/charon/pkg/objstore"
 	"github.com/ValerySidorin/charon/pkg/queue"
 	"github.com/ValerySidorin/charon/pkg/util"
 	"github.com/ValerySidorin/charon/pkg/wal"
@@ -49,9 +49,9 @@ type Downloader struct {
 	healthyInstancesCount *atomic.Uint32
 	subservices           *services.Manager
 
-	diffStoreWriter diffstore.Writer
+	objStore        objstore.Writer
 	fiasNalogClient *fiasnalog.Client
-	fileFetcher     *filefetcher.FileFetcher
+	manager         *manager.Manager
 
 	notifier *notifier.Notifier
 	wal      *dwal.WAL
@@ -67,14 +67,19 @@ type Config struct {
 	TempDirWithID   string          `yaml:"-"`
 	InstanceID      string          `yaml:"-"`
 
+	//Manager
+	BufferSize int `yaml:"bugger_size"`
+
+	//Fias Nalog client
+	Timeout  time.Duration `yaml:"timeout"`
+	RetryMax int           `yaml:"retry_max"`
+
 	DownloadersRing DownloaderRingConfig `yaml:"ring"`
 
-	WAL         walcfg.Config      `yaml:"wal"`
-	Queue       queue.Config       `yaml:"queue"`
-	DiffStore   diffstore.Config   `yaml:"diff_store"`
-	FiasNalog   fiasnalog.Config   `yaml:"fias_nalog"`
-	FileFetcher filefetcher.Config `yaml:"file_fetcher"`
-	Notifier    notifier.Config    `yaml:"notifier"`
+	WAL      walcfg.Config   `yaml:"wal"`
+	Queue    queue.Config    `yaml:"queue"`
+	ObjStore objstore.Config `yaml:"obj_store"`
+	Notifier notifier.Config `yaml:"notifier"`
 }
 
 type StartFromConfig struct {
@@ -88,9 +93,9 @@ func New(ctx context.Context, cfg Config, reg prometheus.Registerer, log gklog.L
 
 	log = gklog.With(log, "service", "downloader", "id", cfg.InstanceID)
 
-	writer, err := diffstore.NewWriter(cfg.DiffStore, diffstore.Bucket)
+	writer, err := objstore.NewWriter(cfg.ObjStore, objstore.Bucket)
 	if err != nil {
-		return nil, errors.Wrap(err, "downloader connect to diffstore as writer")
+		return nil, errors.Wrap(err, "downloader connect to obj store as writer")
 	}
 
 	wal, err := dwal.NewWAL(ctx, cfg.WAL, log)
@@ -100,10 +105,10 @@ func New(ctx context.Context, cfg Config, reg prometheus.Registerer, log gklog.L
 
 	d := &Downloader{
 		cfg:                   cfg,
-		diffStoreWriter:       writer,
+		objStore:              writer,
 		log:                   log,
-		fiasNalogClient:       fiasnalog.NewClient(cfg.FiasNalog),
-		fileFetcher:           filefetcher.NewClient(cfg.FileFetcher, log),
+		fiasNalogClient:       fiasnalog.NewClient(cfg.RetryMax, cfg.Timeout),
+		manager:               manager.New(cfg.BufferSize, log),
 		healthyInstancesCount: atomic.NewUint32(0),
 		instanceMap:           util.NewConcurrentInstanceMap(),
 		wal:                   wal,
@@ -298,7 +303,7 @@ func (d *Downloader) run(ctx context.Context) error {
 		return nil
 	}
 
-	if err := d.fileFetcher.Download(d.cfg.TempDirWithID, d.currRec.Version, d.currRec.DownloadURL); err != nil {
+	if err := d.manager.Download(d.cfg.TempDirWithID, d.currRec.Version, d.currRec.DownloadURL); err != nil {
 		level.Error(d.log).Log("msg", err.Error())
 		return nil
 	}
@@ -312,7 +317,7 @@ func (d *Downloader) run(ctx context.Context) error {
 	}
 
 	versionedDir := filepath.Join(d.cfg.TempDirWithID, strconv.Itoa(d.currRec.Version))
-	fName := filepath.Join(versionedDir, filefetcher.FileName)
+	fName := filepath.Join(versionedDir, manager.FileName)
 
 	file, err := os.Open(fName)
 	if err != nil {
@@ -329,7 +334,7 @@ func (d *Downloader) run(ctx context.Context) error {
 		return nil
 	}
 
-	if err := d.diffStoreWriter.Store(ctx, d.currRec.Version, d.currRec.Type, file); err != nil {
+	if err := d.objStore.Store(ctx, d.currRec.Version, d.currRec.Type, file); err != nil {
 		level.Error(d.log).Log("msg", err.Error())
 		if err := d.unlockWALWithRollback(ctx); err != nil {
 			return err
