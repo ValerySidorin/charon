@@ -1,2 +1,2 @@
 # charon
-## Currentry in development. Not ready for production use.
+## Currently under development. Not ready for production use.

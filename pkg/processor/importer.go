@@ -3,7 +3,6 @@ package processor
 import (
 	"context"
 	"fmt"
-	"sort"
 
 	"github.com/ValerySidorin/charon/pkg/objstore"
 	"github.com/ValerySidorin/charon/pkg/processor/plugin"
@@ -94,7 +93,7 @@ func (i *importer) handle(ctx context.Context) error {
 		if loopErr != nil {
 			continue
 		}
-		if ver == 0 {
+		if ver <= i.plug.GetVersion(ctx) {
 			break
 		}
 
@@ -119,35 +118,41 @@ func (i *importer) handle(ctx context.Context) error {
 				return item.ProcessorID == i.cfg.InstanceID
 			})
 
+			batches := i.plug.GetBatches(recs)
+
 			if !found {
-				sort.Slice(recs[:], func(i, j int) bool {
-					return recs[i].ObjName < recs[j].ObjName
-				})
+				for _, batch := range batches {
+					if !batch.IsCompleted() {
+						for _, rec := range batch.Records {
+							r := rec
+							if rec.ProcessorID != "" && rec.ProcessorID != i.cfg.InstanceID {
+								_, ok := i.instanceMap.Get(rec.ProcessorID)
+								if ok {
+									healthy, loopErr := i.processorIsHealthy(rec.ProcessorID)
+									if loopErr != nil {
+										level.Error(i.log).Log("msg", loopErr.Error())
+										return loopErr
+									}
 
-				for _, rec := range recs {
-					r := rec
-					if rec.ProcessorID != "" && rec.ProcessorID != i.cfg.InstanceID {
-						_, ok := i.instanceMap.Get(rec.ProcessorID)
-						if ok {
-							healthy, loopErr := i.processorIsHealthy(rec.ProcessorID)
-							if loopErr != nil {
-								level.Error(i.log).Log("msg", loopErr.Error())
-								return loopErr
+									if !healthy {
+										fRec = r
+										fRec.ProcessorID = i.cfg.InstanceID
+										fRec.Status = record.PROCESSING
+										break
+									}
+								}
+								continue
 							}
-
-							if !healthy {
-								fRec = r
-								fRec.ProcessorID = i.cfg.InstanceID
-								fRec.Status = record.PROCESSING
-								break
-							}
+							fRec = r
+							fRec.ProcessorID = i.cfg.InstanceID
+							fRec.Status = record.PROCESSING
+							break
 						}
-						continue
+
+						if fRec != nil {
+							break
+						}
 					}
-					fRec = r
-					fRec.ProcessorID = i.cfg.InstanceID
-					fRec.Status = record.PROCESSING
-					break
 				}
 			}
 
@@ -181,6 +186,11 @@ func (i *importer) handle(ctx context.Context) error {
 			}
 
 			level.Debug(i.log).Log("msg", fmt.Sprintf("successfully processed: %s", fRec.ObjName))
+			continue
+		}
+
+		if loopErr = i.plug.UpgradeVersion(ctx, ver); loopErr != nil {
+			level.Error(i.log).Log("msg", loopErr.Error())
 			continue
 		}
 	}

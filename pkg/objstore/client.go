@@ -2,6 +2,7 @@ package objstore
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 
@@ -15,6 +16,11 @@ const (
 type Config struct {
 	Store string       `yaml:"store"`
 	Minio minio.Config `yaml:"minio"`
+}
+
+func (c *Config) RegisterFlags(flagPrefix string, f *flag.FlagSet) {
+	f.StringVar(&c.Store, flagPrefix+"store", "", `Object storage, that will be used to store files from source.`)
+	c.Minio.RegisterFlags(flagPrefix, f)
 }
 
 type Writer interface {

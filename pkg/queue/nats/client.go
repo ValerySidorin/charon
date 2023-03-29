@@ -1,6 +1,8 @@
 package nats
 
 import (
+	"flag"
+
 	"github.com/ValerySidorin/charon/pkg/queue/message"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
@@ -10,6 +12,10 @@ import (
 
 type Config struct {
 	Url string `yaml:"url"`
+}
+
+func (c *Config) RegisterFlags(flagPrefix string, f *flag.FlagSet) {
+	f.StringVar(&c.Url, flagPrefix+"nats.url", "", `NATS URL`)
 }
 
 type NatsClient struct {

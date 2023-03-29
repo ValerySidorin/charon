@@ -2,6 +2,7 @@ package minio
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"io"
 	"path/filepath"
@@ -24,6 +25,13 @@ type Config struct {
 	MinioRootUser     string `yaml:"minio_root_user"`
 	MinioRootPassword string `yaml:"minio_root_password"`
 	Secure            bool   `yaml:"secure"`
+}
+
+func (c *Config) RegisterFlags(flagPrefix string, f *flag.FlagSet) {
+	f.StringVar(&c.Endpoint, flagPrefix+"minio.endpoint", "", `Minio endpoint.`)
+	f.StringVar(&c.MinioRootUser, flagPrefix+"minio.minio-root-user", "", `Minio root user.`)
+	f.StringVar(&c.MinioRootPassword, flagPrefix+"minio.minio-root-password", "", `Minio root password.`)
+	f.BoolVar(&c.Secure, flagPrefix+"minio.secure", false, `Minio secure.`)
 }
 
 type MinioReader struct {
