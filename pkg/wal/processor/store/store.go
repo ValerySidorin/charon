@@ -24,7 +24,7 @@ type Store interface {
 func NewWALStore(ctx context.Context, cfg config.Config, log log.Logger) (Store, error) {
 	switch cfg.Store {
 	case "pg":
-		return pg.NewWALStore(ctx, cfg.Pg, log)
+		return pg.NewWALStore(ctx, cfg.Name, cfg.Pg, log)
 	default:
 		return nil, errors.New("invalid store in config")
 	}

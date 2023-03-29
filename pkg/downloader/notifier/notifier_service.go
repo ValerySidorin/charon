@@ -2,6 +2,7 @@ package notifier
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"sort"
 	"time"
@@ -24,6 +25,11 @@ const (
 type Config struct {
 	CheckInterval time.Duration `yaml:"check_interval"`
 	Queue         queue.Config  `yaml:"queue"`
+}
+
+func (c *Config) RegisterFlags(flagPrefix string, f *flag.FlagSet) {
+	f.DurationVar(&c.CheckInterval, flagPrefix+"check-interval", 5*time.Second, `Notifier check interval, used to monitor completed downloads.`)
+	c.Queue.RegisterFlags(flagPrefix+"queue.", f)
 }
 
 type Notifier struct {

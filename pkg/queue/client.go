@@ -1,6 +1,8 @@
 package queue
 
 import (
+	"flag"
+
 	"github.com/ValerySidorin/charon/pkg/queue/message"
 	"github.com/ValerySidorin/charon/pkg/queue/nats"
 	"github.com/go-kit/log"
@@ -10,6 +12,11 @@ import (
 type Config struct {
 	Type string      `yaml:"type"`
 	Nats nats.Config `yaml:"nats"`
+}
+
+func (c *Config) RegisterFlags(flagPrefix string, f *flag.FlagSet) {
+	f.StringVar(&c.Type, flagPrefix+"type", "nats", `Queue, that will be used for downloader-processor communication.`)
+	c.Nats.RegisterFlags(flagPrefix, f)
 }
 
 type Publisher interface {

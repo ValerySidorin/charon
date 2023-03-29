@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/ValerySidorin/charon/pkg/objstore"
+	"github.com/ValerySidorin/charon/pkg/processor/plugin"
 	"github.com/ValerySidorin/charon/pkg/queue/message"
 	wal "github.com/ValerySidorin/charon/pkg/wal/processor"
 	"github.com/ValerySidorin/charon/pkg/wal/processor/record"
@@ -21,6 +22,8 @@ type persister struct {
 	objStore objstore.Reader
 	wal      *wal.WAL
 	msgCh    chan *message.Message
+
+	plug plugin.Plugin
 }
 
 func newPersister(ctx context.Context, cfg Config, log log.Logger) (*persister, error) {
@@ -34,12 +37,18 @@ func newPersister(ctx context.Context, cfg Config, log log.Logger) (*persister, 
 		return nil, errors.Wrap(err, "persister: connect to processor wal")
 	}
 
+	plug, err := plugin.New(cfg.Plugin, log)
+	if err != nil {
+		return nil, errors.Wrap(err, "persister: init plugin")
+	}
+
 	return &persister{
 		cfg:      cfg,
 		log:      log,
 		objStore: reader,
 		wal:      wal,
 		msgCh:    make(chan *message.Message, cfg.MsgBuffer),
+		plug:     plug,
 	}, nil
 }
 
@@ -71,6 +80,7 @@ func (p *persister) start(ctx context.Context, callback func()) {
 			recs := lo.Map(objs, func(item string, index int) *record.Record {
 				return record.New(msg.Version, item, msg.Type)
 			})
+			recs = p.plug.Filter(recs)
 
 			if err := p.wal.Lock(ctx); err != nil {
 				level.Error(p.log).Log("msg", err.Error())

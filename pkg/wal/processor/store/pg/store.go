@@ -3,6 +3,7 @@ package pg
 import (
 	"context"
 	"database/sql"
+	"fmt"
 
 	"github.com/ValerySidorin/charon/pkg/wal/config/pg"
 	"github.com/ValerySidorin/charon/pkg/wal/processor/record"
@@ -12,35 +13,37 @@ import (
 )
 
 type Store struct {
-	cfg  pg.Config
-	log  log.Logger
-	conn *pgx.Conn
+	cfg     pg.Config
+	log     log.Logger
+	conn    *pgx.Conn
+	tblName string
 
 	currTx pgx.Tx
 }
 
-func NewWALStore(ctx context.Context, cfg pg.Config, log log.Logger) (*Store, error) {
+func NewWALStore(ctx context.Context, name string, cfg pg.Config, log log.Logger) (*Store, error) {
 	conn, err := pgx.Connect(ctx, cfg.Conn)
 	if err != nil {
 		return nil, errors.Wrap(err, "postgres: init connection")
 	}
 
-	q := `create table if not exists public.processor_wal (
+	q := fmt.Sprintf(`create table if not exists public.%s (
 		id bigserial primary key,
 		version integer not null, 
 		processor_id text null, 
 		obj_name text not null, 
 		type text not null, 
 		status text not null,
-		constraint unique_obj_name unique (obj_name));`
+		constraint unique_obj_name unique (obj_name));`, name)
 	if _, err := conn.Exec(ctx, q); err != nil {
 		return nil, errors.Wrap(err, "postgres: init table")
 	}
 
 	return &Store{
-		cfg:  cfg,
-		log:  log,
-		conn: conn,
+		cfg:     cfg,
+		log:     log,
+		conn:    conn,
+		tblName: name,
 	}, nil
 }
 
@@ -87,7 +90,7 @@ func (s *Store) LockAllRecords(ctx context.Context) error {
 		return errors.New("postgres: can not lock table without transaction")
 	}
 
-	q := "lock table processor_wal in access exclusive mode;"
+	q := fmt.Sprintf("lock table %s in access exclusive mode;", s.tblName)
 	_, err := s.currTx.Exec(ctx, q)
 	if err != nil {
 		return errors.Wrap(err, "postgres: lock table")
@@ -97,7 +100,7 @@ func (s *Store) LockAllRecords(ctx context.Context) error {
 }
 
 func (s *Store) MergeRecords(ctx context.Context, recs []*record.Record) error {
-	stmt := "INSERT INTO public.processor_wal (version, processor_id, obj_name, type, status) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (obj_name) DO NOTHING;"
+	stmt := fmt.Sprintf("INSERT INTO public.%s (version, processor_id, obj_name, type, status) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (obj_name) DO NOTHING;", s.tblName)
 	if s.currTx != nil {
 		_, err := s.currTx.Prepare(ctx, "merge_records", stmt)
 		if err != nil {
@@ -136,12 +139,12 @@ func (s *Store) MergeRecords(ctx context.Context, recs []*record.Record) error {
 }
 
 func (s *Store) UpdateRecord(ctx context.Context, rec *record.Record) error {
-	q := `update processor_wal
+	q := fmt.Sprintf(`update %s
 	set version = $1,
 	processor_id = $2,
 	type = $3,
 	status = $4
-	where obj_name = $5;`
+	where obj_name = $5;`, s.tblName)
 
 	if s.currTx != nil {
 		_, err := s.currTx.Exec(ctx, q, rec.Version, rec.ProcessorID, rec.Type, rec.Status, rec.ObjName)
@@ -161,7 +164,7 @@ func (s *Store) UpdateRecord(ctx context.Context, rec *record.Record) error {
 }
 
 func (s *Store) GetRecordsByVersion(ctx context.Context, version int) ([]*record.Record, error) {
-	q := "select version, processor_id, obj_name, type, status from processor_wal where version = $1;"
+	q := fmt.Sprintf("select version, processor_id, obj_name, type, status from %s where version = $1;", s.tblName)
 	recs := make([]*record.Record, 0)
 
 	if s.currTx != nil {
@@ -200,7 +203,7 @@ func (s *Store) GetRecordsByVersion(ctx context.Context, version int) ([]*record
 }
 
 func (s *Store) GetLastVersion(ctx context.Context) (int, error) {
-	q := `select max(version) from processor_wal;`
+	q := fmt.Sprintf(`select max(version) from %s;`, s.tblName)
 	var id sql.NullInt64
 
 	if s.currTx != nil {
@@ -229,7 +232,7 @@ func (s *Store) GetLastVersion(ctx context.Context) (int, error) {
 }
 
 func (s *Store) GetFirstIncompleteVersion(ctx context.Context) (int, error) {
-	q := `select min(version) from processor_wal where status != 'COMPLETED';`
+	q := fmt.Sprintf(`select min(version) from %s where status != 'COMPLETED';`, s.tblName)
 	var id sql.NullInt64
 
 	if s.currTx != nil {
@@ -258,10 +261,10 @@ func (s *Store) GetFirstIncompleteVersion(ctx context.Context) (int, error) {
 }
 
 func (s *Store) GetIncompleteRecordsByVersion(ctx context.Context, version int) ([]*record.Record, error) {
-	q := `select 
+	q := fmt.Sprintf(`select 
 version, processor_id, obj_name, type, status
-from processor_wal
-where version = $1 and status != 'COMPLETED'`
+from %s
+where version = $1 and status != 'COMPLETED'`, s.tblName)
 	recs := make([]*record.Record, 0)
 
 	if s.currTx != nil {

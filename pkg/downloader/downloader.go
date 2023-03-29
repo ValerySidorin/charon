@@ -2,6 +2,7 @@ package downloader
 
 import (
 	"context"
+	"flag"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -12,7 +13,6 @@ import (
 	"github.com/ValerySidorin/charon/pkg/downloader/manager"
 	"github.com/ValerySidorin/charon/pkg/downloader/notifier"
 	"github.com/ValerySidorin/charon/pkg/objstore"
-	"github.com/ValerySidorin/charon/pkg/queue"
 	"github.com/ValerySidorin/charon/pkg/util"
 	"github.com/ValerySidorin/charon/pkg/wal"
 	walcfg "github.com/ValerySidorin/charon/pkg/wal/config"
@@ -68,7 +68,7 @@ type Config struct {
 	InstanceID      string          `yaml:"-"`
 
 	//Manager
-	BufferSize int `yaml:"bugger_size"`
+	BufferSize int `yaml:"buffer_size"`
 
 	//Fias Nalog client
 	Timeout  time.Duration `yaml:"timeout"`
@@ -77,8 +77,7 @@ type Config struct {
 	DownloadersRing DownloaderRingConfig `yaml:"ring"`
 
 	WAL      walcfg.Config   `yaml:"wal"`
-	Queue    queue.Config    `yaml:"queue"`
-	ObjStore objstore.Config `yaml:"obj_store"`
+	ObjStore objstore.Config `yaml:"objstore"`
 	Notifier notifier.Config `yaml:"notifier"`
 }
 
@@ -87,8 +86,30 @@ type StartFromConfig struct {
 	Version  int    `yaml:"version"`
 }
 
+func (c *StartFromConfig) RegisterFlags(f *flag.FlagSet, log gklog.Logger) {
+	f.StringVar(&c.FileType, "downloader.start-from.file-type", wal.FileTypeFull, `What type of file to start from.
+	Available values: DIFF, FULL`)
+	f.IntVar(&c.Version, "downloader.start-from.version", 0, "What version to start from.")
+}
+
+func (c *Config) RegisterFlags(f *flag.FlagSet, log gklog.Logger) {
+	c.StartFrom.RegisterFlags(f, log)
+	c.DownloadersRing.RegisterFlags(f, log)
+	c.WAL.RegisterFlags("downloader.wal.", f)
+	c.ObjStore.RegisterFlags("downloader.objstore.", f)
+	c.Notifier.RegisterFlags("downloader.notifier.", f)
+
+	f.DurationVar(&c.PollingInterval, "downloader.polling-interval", 1*time.Second, "An interval, which downloader will use to monitor new versions to download.")
+	f.StringVar(&c.TempDir, "downloader.temp-dir", "", `Directory, that downloader will use as a transshipment point between source server and self object storage.`)
+
+	f.IntVar(&c.BufferSize, "downloader.buffer-size", 4096, `The size of buffer, used to download file from source.`)
+
+	f.DurationVar(&c.Timeout, "downloader.timeout", 30*time.Second, `Timeout for client, polling data from source server.`)
+	f.IntVar(&c.RetryMax, "downloader.retry-max", 3, `Retry count for client, polling data from source`)
+}
+
 func New(ctx context.Context, cfg Config, reg prometheus.Registerer, log gklog.Logger) (*Downloader, error) {
-	cfg.InstanceID = cfg.DownloadersRing.InstanceID
+	cfg.InstanceID = cfg.DownloadersRing.Common.InstanceID
 	cfg.TempDirWithID = filepath.Join(cfg.TempDir, cfg.InstanceID)
 
 	log = gklog.With(log, "service", "downloader", "id", cfg.InstanceID)
@@ -144,7 +165,7 @@ func New(ctx context.Context, cfg Config, reg prometheus.Registerer, log gklog.L
 
 func newRingAndLifecycler(ringCfg DownloaderRingConfig, instanceCount *atomic.Uint32, instances *util.ConcurrentInstanceMap, logger gklog.Logger, reg prometheus.Registerer) (*ring.Ring, *ring.BasicLifecycler, error) {
 	reg = prometheus.WrapRegistererWithPrefix("charon_", reg)
-	kvStore, err := kv.NewClient(ringCfg.KVStore, ring.GetCodec(), kv.RegistererWithKVName(reg, "downloader-lifecycler"), logger)
+	kvStore, err := kv.NewClient(ringCfg.Common.KVStore, ring.GetCodec(), kv.RegistererWithKVName(reg, "downloader-lifecycler"), logger)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "failed to initialize downloader' KV store")
 	}
@@ -161,12 +182,12 @@ func newRingAndLifecycler(ringCfg DownloaderRingConfig, instanceCount *atomic.Ui
 	delegate = ring.NewLeaveOnStoppingDelegate(delegate, logger)
 	delegate = util.NewAutoMarkUnhealthyDelegate(ringAutoMarkUnhealthyPeriods*lifecyclerCfg.HeartbeatTimeout, delegate, logger)
 
-	downloadersLifecycler, err := ring.NewBasicLifecycler(lifecyclerCfg, "downloader", downloaderRingKey, kvStore, delegate, logger, reg)
+	downloadersLifecycler, err := ring.NewBasicLifecycler(lifecyclerCfg, ringCfg.Common.Key, downloaderRingKey, kvStore, delegate, logger, reg)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "failed to initialize downloaders' lifecycler")
 	}
 
-	downloadersRing, err := ring.New(ringCfg.toRingConfig(), "downloader", downloaderRingKey, logger, reg)
+	downloadersRing, err := ring.New(ringCfg.toRingConfig(), ringCfg.Common.Key, downloaderRingKey, logger, reg)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "failed to initialize downloaders' ring client")
 	}
@@ -430,6 +451,9 @@ func (d *Downloader) getWALRecordToProcess(ctx context.Context) (*walrec.Record,
 
 		if !found {
 			if len(fInfos) > 0 {
+				fInfos = lo.Filter(fInfos, func(item fiasnalog.DownloadFileInfo, index int) bool {
+					return item.GARXMLFullURL != ""
+				})
 				fInfo := fInfos[0]
 				return walrec.New(fInfo.VersionID, d.cfg.InstanceID, fInfo.GARXMLFullURL, wal.FileTypeFull), nil
 			}
@@ -452,7 +476,7 @@ func (d *Downloader) getWALRecordToProcess(ctx context.Context) (*walrec.Record,
 	})
 
 	avlInfos := lo.FilterMap(fInfos, func(item fiasnalog.DownloadFileInfo, index int) (int, bool) {
-		return item.VersionID, item.VersionID > lastSentVer && item.VersionID >= d.cfg.StartFrom.Version
+		return item.VersionID, item.VersionID > lastSentVer && item.VersionID >= d.cfg.StartFrom.Version && item.GARXMLDeltaURL != ""
 	})
 
 	firstAvlVer := lo.Min(lo.Without(avlInfos, avlRecs...))

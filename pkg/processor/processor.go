@@ -2,6 +2,7 @@ package processor
 
 import (
 	"context"
+	"flag"
 	"sort"
 	"time"
 
@@ -38,9 +39,19 @@ type Config struct {
 
 	ProcessorsRing ProcessorRingConfig `yaml:"ring"`
 	Queue          queue.Config        `yaml:"queue"`
-	ObjStore       objstore.Config     `yaml:"obj_store"`
+	ObjStore       objstore.Config     `yaml:"objstore"`
 	WAL            walcfg.Config       `yaml:"wal"`
 	Plugin         plugin.Config       `yaml:"plugin"`
+}
+
+func (c *Config) RegisterFlags(f *flag.FlagSet, log gklog.Logger) {
+	c.ProcessorsRing.RegisterFlags(f, log)
+	c.Queue.RegisterFlags("processor.queue.", f)
+	c.ObjStore.RegisterFlags("processor.objstore.", f)
+	c.WAL.RegisterFlags("processor.wal.", f)
+	c.Plugin.RegisterFlags("processor.plugin.", f)
+
+	f.IntVar(&c.MsgBuffer, "processor.msg-buffer", 100, `Buffer, which processor will use to cache messages from downloaders.`)
 }
 
 type Processor struct {
@@ -65,8 +76,8 @@ type Processor struct {
 }
 
 func New(ctx context.Context, cfg Config, reg prometheus.Registerer, log gklog.Logger) (*Processor, error) {
-	cfg.InstanceID = cfg.ProcessorsRing.InstanceID
-	log = gklog.With(log, "service", "processor", "id", cfg.InstanceID, "ring_key", cfg.ProcessorsRing.Key)
+	cfg.InstanceID = cfg.ProcessorsRing.Common.InstanceID
+	log = gklog.With(log, "service", "processor", "id", cfg.InstanceID)
 
 	wal, err := wal.NewWAL(ctx, cfg.WAL, log)
 	if err != nil {
@@ -128,7 +139,7 @@ func New(ctx context.Context, cfg Config, reg prometheus.Registerer, log gklog.L
 
 func newRingAndLifecycler(ringCfg ProcessorRingConfig, instanceCount *atomic.Uint32, instances *util.ConcurrentInstanceMap, logger gklog.Logger, reg prometheus.Registerer) (*ring.Ring, *ring.BasicLifecycler, error) {
 	reg = prometheus.WrapRegistererWithPrefix("charon_", reg)
-	kvStore, err := kv.NewClient(ringCfg.KVStore, ring.GetCodec(), kv.RegistererWithKVName(reg, "processor-lifecycler"), logger)
+	kvStore, err := kv.NewClient(ringCfg.Common.KVStore, ring.GetCodec(), kv.RegistererWithKVName(reg, "processor-lifecycler"), logger)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "failed to initialize downloader' KV store")
 	}
@@ -145,12 +156,12 @@ func newRingAndLifecycler(ringCfg ProcessorRingConfig, instanceCount *atomic.Uin
 	delegate = ring.NewLeaveOnStoppingDelegate(delegate, logger)
 	delegate = util.NewAutoMarkUnhealthyDelegate(ringAutoMarkUnhealthyPeriods*lifecyclerCfg.HeartbeatTimeout, delegate, logger)
 
-	processorsLifecycler, err := ring.NewBasicLifecycler(lifecyclerCfg, "processor", ringCfg.Key, kvStore, delegate, logger, reg)
+	processorsLifecycler, err := ring.NewBasicLifecycler(lifecyclerCfg, "processor", ringCfg.Common.Key, kvStore, delegate, logger, reg)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "failed to initialize processors' lifecycler")
 	}
 
-	processorsRing, err := ring.New(ringCfg.toRingConfig(), "processor", ringCfg.Key, logger, reg)
+	processorsRing, err := ring.New(ringCfg.toRingConfig(), "processor", ringCfg.Common.Key, logger, reg)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "failed to initialize processors' ring client")
 	}

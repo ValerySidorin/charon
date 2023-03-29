@@ -1,158 +1,111 @@
 package main
 
 import (
+	"bytes"
+	"flag"
 	"fmt"
+	"io"
+	"math/rand"
 	"os"
+	"strings"
+	"time"
 
-	"github.com/ValerySidorin/charon/pkg/downloader"
-	"github.com/ValerySidorin/charon/pkg/processor"
-	"github.com/go-kit/log"
+	"github.com/ValerySidorin/charon/pkg/charon"
+	util_log "github.com/ValerySidorin/charon/pkg/util/log"
+	"github.com/go-kit/log/level"
+	"github.com/grafana/dskit/flagext"
+	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
-	"golang.org/x/net/context"
-	"gopkg.in/yaml.v2"
+	"gopkg.in/yaml.v3"
+)
+
+const (
+	configFileOption      = "config.file"
+	configExpandEnvOption = "config.expand-env"
 )
 
 func main() {
-	testProcessors()
-	testDownloaders()
+	var (
+		cfg charon.Config
+	)
 
-	select {}
+	conf, expandEnv := parseConfigFileParameter(os.Args[1:])
+
+	cfg.RegisterFlags(flag.CommandLine, util_log.Logger)
+
+	if err := LoadConfig(conf, expandEnv, &cfg); err != nil {
+		fmt.Fprintf(os.Stderr, "error loading config from: %s: %v\n", conf, err)
+		os.Exit(1)
+	}
+
+	flagext.IgnoredFlag(flag.CommandLine, configFileOption, "Configuration file to load.")
+	_ = flag.CommandLine.Bool(configExpandEnvOption, false, "Expands ${var} or $var in config according to the values of the environment variables.")
+
+	flag.CommandLine.Usage = func() {}
+	flag.CommandLine.Init(flag.CommandLine.Name(), flag.ContinueOnError)
+
+	if err := flag.CommandLine.Parse(os.Args[1:]); err != nil {
+		fmt.Fprintln(flag.CommandLine.Output(), "Run with -help to get a list of available parameters")
+	}
+
+	util_log.InitLogger(&cfg.Log)
+
+	rand.Seed(time.Now().UnixNano())
+
+	c, err := charon.New(cfg, prometheus.DefaultRegisterer)
+	util_log.CheckFatal("initializing application", err)
+
+	level.Info(util_log.Logger).Log("msg", "Starting application")
+
+	err = c.Run()
+
+	util_log.CheckFatal("running application", err)
 }
 
-func testDownloaders() {
-	conf := `
-start_from:
-  file_type: diff
-  version: 20230314
-polling_interval: 10s
-temp_dir: D://charon/downloader
-timeout: 30s
-retry_max: 5
-buffer_size: 4096
-ring:
-  heartbeat_period: 1s
-  heartbeat_timeout: 2s
-  instance_id: downloader_1
-  kvstore:
-    store: consul
-    consul:
-      host: "localhost:8500"
-      consistentreads: true
-      acl_token: charon
-    prefix: "charon/"
-obj_store:
-  store: minio
-  minio:
-    endpoint: "localhost:9000"
-    minio_root_user: charon
-    minio_root_password: charonpwd
-wal:
-  store: pg
-  pg:
-    conn: postgres://charon:charonpwd@localhost:5432/charon
-notifier:
-  check_interval: 10s
-  queue:
-    type: nats
-    conn: nats://charon:charonpwd@localhost:4222
-`
+func parseConfigFileParameter(args []string) (configFile string, configExpandEnv bool) {
+	fs := flag.NewFlagSet("", flag.ContinueOnError)
+	fs.SetOutput(io.Discard)
 
-	cfg := downloader.Config{}
-	err := yaml.Unmarshal([]byte(conf), &cfg)
-	if err != nil {
-		fmt.Println(err.Error())
-		os.Exit(1)
+	fs.StringVar(&configFile, configFileOption, "", "")
+	fs.BoolVar(&configExpandEnv, configExpandEnvOption, false, "")
+
+	for len(args) > 0 {
+		_ = fs.Parse(args)
+		args = args[1:]
 	}
 
-	ctx, _ := context.WithCancel(context.Background())
-
-	d, err := downloader.New(ctx, cfg, prometheus.NewPedanticRegistry(), log.NewLogfmtLogger(os.Stdout))
-	if err != nil {
-		fmt.Println(err.Error())
-		os.Exit(1)
-	}
-
-	cfg2 := cfg
-	cfg2.DownloadersRing.InstanceID = "downloader_2"
-
-	ctx2, _ := context.WithCancel(context.Background())
-
-	d2, err := downloader.New(ctx2, cfg2, prometheus.NewPedanticRegistry(), log.NewLogfmtLogger(os.Stdout))
-	if err != nil {
-		fmt.Println(err.Error())
-		os.Exit(1)
-	}
-
-	d.StartAsync(ctx)
-	d2.StartAsync(ctx2)
-
-	d.AwaitRunning(ctx)
-	d2.AwaitRunning(ctx)
-
-	fmt.Println(d.State().String())
-	fmt.Println(d2.State().String())
+	return
 }
 
-func testProcessors() {
-	conf := `
-msg_buffer: 100
-ring:
-  key: mock_processor
-  heartbeat_period: 1s
-  heartbeat_timeout: 2s
-  instance_id: processor_1
-  kvstore:
-    store: consul 
-    consul:
-      host: "localhost:8500"
-      consistentreads: true
-      acl_token: charon
-    prefix: "charon/"
-obj_store:
-  store: minio
-  minio:
-    endpoint: "localhost:9000"
-    minio_root_user: charon
-    minio_root_password: charonpwd
-wal:
-  store: pg
-  pg:
-    conn: postgres://charon:charonpwd@localhost:5432/charon
-queue:
-  type: nats
-  conn: nats://charon:charonpwd@localhost:4222
-plugin:
-  mock: mock
-`
-
-	cfg := processor.Config{}
-	err := yaml.Unmarshal([]byte(conf), &cfg)
+func LoadConfig(filename string, expandEnv bool, cfg *charon.Config) error {
+	buf, err := os.ReadFile(filename)
 	if err != nil {
-		fmt.Println(err.Error())
-		os.Exit(1)
+		return errors.Wrap(err, "Error reading config file")
 	}
 
-	ctx := context.Background()
-	p, err := processor.New(ctx, cfg, prometheus.NewPedanticRegistry(), log.NewLogfmtLogger(os.Stdout))
-	if err != nil {
-		fmt.Println(err.Error())
-		os.Exit(1)
+	if expandEnv {
+		buf = expandEnvironmentVariables(buf)
 	}
 
-	cfg2 := cfg
-	cfg2.ProcessorsRing.InstanceID = "processor_2"
+	dec := yaml.NewDecoder(bytes.NewReader(buf))
+	dec.KnownFields(true)
 
-	p2, err := processor.New(ctx, cfg2, prometheus.NewPedanticRegistry(), log.NewLogfmtLogger(os.Stdout))
-	if err != nil {
-		fmt.Println(err.Error())
-		os.Exit(1)
+	if err := dec.Decode(cfg); err != nil {
+		return errors.Wrap(err, "Error parsing config file")
 	}
 
-	p.StartAsync(ctx)
-	p2.StartAsync(ctx)
-	p.AwaitRunning(ctx)
-	p2.AwaitRunning(ctx)
+	return nil
+}
 
-	fmt.Println(p.State().String())
-	fmt.Println(p2.State().String())
+func expandEnvironmentVariables(config []byte) []byte {
+	return []byte(os.Expand(string(config), func(key string) string {
+		keyAndDefault := strings.SplitN(key, ":", 2)
+		key = keyAndDefault[0]
+
+		v := os.Getenv(key)
+		if v == "" && len(keyAndDefault) == 2 {
+			v = keyAndDefault[1]
+		}
+		return v
+	}))
 }
