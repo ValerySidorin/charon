@@ -1,6 +1,7 @@
 package manager
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -41,6 +42,10 @@ func (f *Manager) Download(path string, version int, url string) error {
 
 	level.Info(f.log).Log("msg", fmt.Sprintf("start downloading file: %s", url))
 	req, err := grab.NewRequest(filepath.Join(path, versionStr, FileName), url)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	req = req.WithContext(ctx)
 	if err != nil {
 		return errors.Wrap(err, "file fetcher create request")
 	}
@@ -49,6 +54,30 @@ func (f *Manager) Download(path string, version int, url string) error {
 	defer t.Stop()
 
 	resp := f.grabClient.Do(req)
+
+	// Sometimes a connection is lost, but we can not properly detect it,
+	// so we need to monitor, if file is still downloading
+	go func() {
+		t2 := time.NewTicker(30 * time.Second)
+		defer t2.Stop()
+
+		prevProg := resp.Progress()
+
+		for {
+			select {
+			case <-t2.C:
+				currProg := resp.Progress()
+				if currProg == prevProg {
+					level.Error(f.log).Log("msg", "seems like an existing connection was forcibly closed by the remote host, canceling context")
+					cancel()
+				} else {
+					prevProg = currProg
+				}
+			case <-resp.Done:
+				return
+			}
+		}
+	}()
 
 Loop:
 	for {

@@ -1,0 +1,71 @@
+log:
+  log_format: json
+  log_level: debug
+
+downloader:
+  start_from:
+    file_type: diff
+    version: 20230314
+  polling_interval: 10s
+  temp_dir: D://charon/downloader
+  timeout: 30s
+  retry_max: 5
+  buffer_size: 4096
+  ring:
+    heartbeat_period: 15s
+    heartbeat_timeout: 30s
+    instance_id: downloader_1
+    kvstore:
+      store: consul
+      consul:
+        host: "consul:8500"
+        consistent_reads: true
+        acl_token: charon
+  objstore:
+    store: minio
+    minio:
+      endpoint: "minio:9000"
+      minio_root_user: charon
+      minio_root_password: charonpwd
+  wal:
+    store: pg
+    pg:
+      conn: postgres://charon:charonpwd@postgres:5432/charon
+  notifier:
+    check_interval: 10s
+    queue:
+      type: nats
+      nats:
+        url: nats://charon:charonpwd@nats:4222
+
+processor:
+  msg_buffer: 100
+  ring:
+    key: mock_processor
+    heartbeat_period: 15s
+    heartbeat_timeout: 30s
+    instance_id: processor_1
+    kvstore:
+      store: consul 
+      consul:
+        host: "consul:8500"
+        consistent_reads: true
+        acl_token: charon
+  objstore:
+    store: minio
+    minio:
+      endpoint: "minio:9000"
+      minio_root_user: charon
+      minio_root_password: charonpwd
+  wal:
+    name: processor_wal
+    store: pg
+    pg:
+      conn: postgres://charon:charonpwd@postgres:5432/charon
+  queue:
+    type: nats
+    nats:
+      url: nats://charon:charonpwd@nats:4222
+  plugin:
+    mock:
+      type: mock
