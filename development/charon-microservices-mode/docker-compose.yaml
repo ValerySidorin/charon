@@ -1,16 +1,65 @@
 version: '3.9'
 services:
+  charon-downloader-1:
+    image: charon:${BUILD_TAG}
+    build: ../..
+    volumes:
+      - ${SHARED_DIR}/charon/data:/data
+    command: -config.file /data/cfg.yaml -target downloader -downloader.temp-dir /data/downloader
+    restart: unless-stopped
+    depends_on:
+      - minio
+      - consul
+      - postgres
+      - nats
+  charon-downloader-2:
+    image: charon:${BUILD_TAG}
+    build: ../..
+    volumes:
+      - ${SHARED_DIR}/charon/data:/data
+    command: -config.file /data/cfg.yaml -target downloader -downloader.temp-dir /data/downloader
+    restart: unless-stopped
+    depends_on:
+      - minio
+      - consul
+      - postgres
+      - nats
+  charon-processor-1:
+    image: charon:${BUILD_TAG}
+    build: ../..
+    volumes:
+      - ${SHARED_DIR}/charon/data:/data
+    command: -config.file /data/cfg.yaml -target processor
+    restart: unless-stopped
+    depends_on:
+      - minio
+      - consul
+      - postgres
+      - nats
+  charon-processor-2:
+    image: charon:${BUILD_TAG}
+    build: ../..
+    volumes:
+      - ${SHARED_DIR}/charon/data:/data
+    command: -config.file /data/cfg.yaml -target processor
+    restart: unless-stopped
+    depends_on:
+      - minio
+      - consul
+      - postgres
+      - nats
+
   minio:
     image: minio/minio
     ports:
     - "9000:9000"
     - "9001:9001"
     volumes:
-      - ${SHARED_DIR}/minio/data:/var/lib/minio/data
+      - ${SHARED_DIR}/minio/data:/data
     environment:
       MINIO_ROOT_USER: ${MINIO_ROOT_USER}
       MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
-    command: server --console-address ":9001" /var/lib/minio/data
+    command: server --console-address ":9001" /data
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
       interval: 30s
@@ -34,10 +83,7 @@ services:
     image: postgres
     ports: 
       - "5432:5432"
-    # volumes:
-    #     - ./build/pg/init:/docker-entrypoint-initdb.d
     environment:
-      # POSTGRES_MULTIPLE_DATABASES: ${DOWNLOADER_DB},${PROCESSOR_DB}
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
