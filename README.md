@@ -17,6 +17,5 @@ Some of the key features of Charon include:
 ## Documentation
 Here is a list of all available docs:
 
-- Quick start
-- Installation
-- Architecture
+- [Quick start](docs/quick-start.md)
+- [Architecture](docs/architecture.md)
