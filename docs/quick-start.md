@@ -79,4 +79,4 @@ charon -target processor -config.file C:/charon/cfg.yaml -processor.ring.instanc
 ```sh
 docker compose up -d
 ```
-All example configs for Docker deployment can be found at deployment/
+All example configs for Docker deployment can be found at development/
