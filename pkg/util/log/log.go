@@ -57,7 +57,7 @@ func CheckFatal(location string, err error) {
 			logger = log.With(logger, "msg", "error "+location)
 		}
 
-		logger.Log("err", fmt.Sprintf("%+v", err))
+		_ = logger.Log("err", fmt.Sprintf("%+v", err))
 		os.Exit(1)
 	}
 }

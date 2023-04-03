@@ -73,7 +73,7 @@ func (p *persister) start(ctx context.Context, callback func()) {
 			}
 			objs, err := p.objStore.RetrieveObjNamesByVersion(ctx, msg.Version, msg.Type)
 			if err != nil {
-				level.Error(p.log).Log("msg", err.Error())
+				_ = level.Error(p.log).Log("msg", err.Error())
 				tryCount++
 				continue
 			}
@@ -83,9 +83,9 @@ func (p *persister) start(ctx context.Context, callback func()) {
 			recs = p.plug.Filter(recs)
 
 			if err := p.wal.Lock(ctx); err != nil {
-				level.Error(p.log).Log("msg", err.Error())
+				_ = level.Error(p.log).Log("msg", err.Error())
 				if rbErr := p.wal.Unlock(ctx, false); rbErr != nil {
-					level.Error(p.log).Log("msg", rbErr.Error())
+					_ = level.Error(p.log).Log("msg", rbErr.Error())
 					tryCount++
 					continue
 				}
@@ -93,19 +93,19 @@ func (p *persister) start(ctx context.Context, callback func()) {
 
 			if err := p.wal.MergeRecords(ctx, recs); err != nil {
 				if rbErr := p.wal.Unlock(ctx, false); rbErr != nil {
-					level.Error(p.log).Log("msg", rbErr.Error())
+					_ = level.Error(p.log).Log("msg", rbErr.Error())
 					tryCount++
 					continue
 				}
 			}
 
 			if err := p.wal.Unlock(ctx, true); err != nil {
-				level.Error(p.log).Log("msg", err.Error())
+				_ = level.Error(p.log).Log("msg", err.Error())
 				tryCount++
 				continue
 			}
 
-			level.Debug(p.log).Log("msg", fmt.Sprintf("persister: successfully persisted message: %s", msg.String()))
+			_ = level.Debug(p.log).Log("msg", fmt.Sprintf("persister: successfully persisted message: %s", msg.String()))
 			processed = true
 		}
 

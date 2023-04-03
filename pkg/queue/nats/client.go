@@ -40,7 +40,7 @@ func (n *NatsClient) Sub(channel string, f func(msg *message.Message)) error {
 	_, err := n.conn.Subscribe("charon", func(msg *nats.Msg) {
 		mes, err := message.NewMessage(string(msg.Data))
 		if err != nil {
-			level.Error(n.log).Log("msg", err.Error())
+			_ = level.Error(n.log).Log("msg", err.Error())
 			return
 		}
 

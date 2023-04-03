@@ -121,7 +121,9 @@ func (s *Store) MergeRecords(ctx context.Context, recs []*record.Record) error {
 	if err != nil {
 		return errors.Wrap(err, "postgres: merge records")
 	}
-	defer tx.Rollback(ctx)
+	defer func() {
+		_ = tx.Rollback(ctx)
+	}()
 
 	_, err = tx.Prepare(ctx, "merge_records", stmt)
 	if err != nil {
