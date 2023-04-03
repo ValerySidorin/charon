@@ -71,7 +71,7 @@ func New(ctx context.Context, cfg Config, walcfg walconfig.Config, downloaderID 
 func (n *Notifier) run(ctx context.Context) error {
 	hasRecs, err := n.wal.HasCompletedRecords(ctx, n.downloaderID)
 	if err != nil {
-		level.Error(n.log).Log("msg", err.Error())
+		_ = level.Error(n.log).Log("msg", err.Error())
 		return nil
 	}
 
@@ -91,7 +91,7 @@ func (n *Notifier) run(ctx context.Context) error {
 	})
 
 	if err != nil {
-		level.Error(n.log).Log("msg", err.Error())
+		_ = level.Error(n.log).Log("msg", err.Error())
 		if err := n.wal.Unlock(ctx, false); err != nil {
 			return err
 		}
@@ -109,14 +109,14 @@ func (n *Notifier) run(ctx context.Context) error {
 
 		msg := getMsg(rec)
 		if err := n.pub.Pub(channelName, msg); err != nil {
-			level.Error(n.log).Log("msg", err.Error())
+			_ = level.Error(n.log).Log("msg", err.Error())
 			if err := n.wal.Unlock(ctx, false); err != nil {
 				return err
 			}
 
 			return nil
 		}
-		level.Debug(n.log).Log("msg", fmt.Sprintf("sent message '%s' to channel '%s'", msg, channelName))
+		_ = level.Debug(n.log).Log("msg", fmt.Sprintf("sent message '%s' to channel '%s'", msg, channelName))
 
 		rec.Status = walrecord.SENT
 		if err := n.wal.UpdateRecord(ctx, rec); err != nil {

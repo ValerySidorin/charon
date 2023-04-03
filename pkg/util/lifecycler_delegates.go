@@ -148,7 +148,7 @@ func (d *AutoMarkUnhealthyDelegate) OnRingInstanceHeartbeat(lifecycler *ring.Bas
 			lastHeartbeat := time.Unix(instance.GetTimestamp(), 0)
 
 			if time.Since(lastHeartbeat) > d.forgetPeriod {
-				level.Warn(d.log).Log("msg", "marking instance as unhealthy because it is not heartbeating for a long time", "instance", id, "last_heartbeat", lastHeartbeat.String(), "forget_period", d.forgetPeriod)
+				_ = level.Warn(d.log).Log("msg", "marking instance as unhealthy because it is not heartbeating for a long time", "instance", id, "last_heartbeat", lastHeartbeat.String(), "forget_period", d.forgetPeriod)
 				ringDesc.RemoveIngester(id)
 				ringDesc.AddIngester(id, instance.Addr, instance.Zone, instance.Tokens, ring.LEFT, instance.GetRegisteredAt())
 			}

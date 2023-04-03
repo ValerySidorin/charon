@@ -28,13 +28,6 @@ type Config struct {
 	Log        util_log.Config   `yaml:"log"`
 }
 
-func newDefaultConfig() *Config {
-	defaultConfig := &Config{}
-	defaultFS := flag.NewFlagSet("", flag.PanicOnError)
-	defaultConfig.RegisterFlags(defaultFS, util_log.Logger)
-	return defaultConfig
-}
-
 func (c *Config) RegisterFlags(f *flag.FlagSet, log log.Logger) {
 	c.ApplicationName = "Charon"
 	c.Target = []string{All}
@@ -97,23 +90,23 @@ func (c *Charon) Run() error {
 
 	shutdownRequested := atomic.NewBool(false)
 
-	healthy := func() { level.Info(util_log.Logger).Log("msg", "Application started") }
-	stopped := func() { level.Info(util_log.Logger).Log("msg", "Application stopped") }
+	healthy := func() { _ = level.Info(util_log.Logger).Log("msg", "Application started") }
+	stopped := func() { _ = level.Info(util_log.Logger).Log("msg", "Application stopped") }
 	serviceFailed := func(service services.Service) {
 		sm.StopAsync()
 
 		for m, s := range c.ServiceMap {
 			if s == service {
 				if errors.Is(service.FailureCase(), modules.ErrStopProcess) {
-					level.Info(util_log.Logger).Log("msg", "received stop signal via return error", "module", m, "err", service.FailureCase())
+					_ = level.Info(util_log.Logger).Log("msg", "received stop signal via return error", "module", m, "err", service.FailureCase())
 				} else {
-					level.Error(util_log.Logger).Log("msg", "module failed", "module", m, "err", service.FailureCase())
+					_ = level.Error(util_log.Logger).Log("msg", "module failed", "module", m, "err", service.FailureCase())
 				}
 				return
 			}
 		}
 
-		level.Error(util_log.Logger).Log("msg", "module failed", "module", "unknown", "err", service.FailureCase())
+		_ = level.Error(util_log.Logger).Log("msg", "module failed", "module", "unknown", "err", service.FailureCase())
 	}
 
 	sm.AddListener(services.NewManagerListener(healthy, stopped, serviceFailed))

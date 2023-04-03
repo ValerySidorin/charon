@@ -40,7 +40,7 @@ func (f *Manager) Download(path string, version int, url string) error {
 		return err
 	}
 
-	level.Info(f.log).Log("msg", fmt.Sprintf("start downloading file: %s", url))
+	_ = level.Info(f.log).Log("msg", fmt.Sprintf("start downloading file: %s", url))
 	req, err := grab.NewRequest(filepath.Join(path, versionStr, FileName), url)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -68,7 +68,7 @@ func (f *Manager) Download(path string, version int, url string) error {
 			case <-t2.C:
 				currProg := resp.Progress()
 				if currProg == prevProg {
-					level.Error(f.log).Log("msg", "seems like an existing connection was forcibly closed by the remote host, canceling context")
+					_ = level.Error(f.log).Log("msg", "seems like an existing connection was forcibly closed by the remote host, canceling context")
 					cancel()
 				} else {
 					prevProg = currProg
@@ -83,7 +83,7 @@ Loop:
 	for {
 		select {
 		case <-t.C:
-			level.Debug(f.log).Log("msg", fmt.Sprintf("transferred %d / %d bytes (%.2f%%)",
+			_ = level.Debug(f.log).Log("msg", fmt.Sprintf("transferred %d / %d bytes (%.2f%%)",
 				resp.BytesComplete(),
 				resp.Size(),
 				100*resp.Progress()), "version", version)
@@ -93,7 +93,7 @@ Loop:
 	}
 
 	if err := resp.Err(); err != nil {
-		level.Error(f.log).Log("msg", resp.Err().Error())
+		_ = level.Error(f.log).Log("msg", resp.Err().Error())
 		return err
 	}
 

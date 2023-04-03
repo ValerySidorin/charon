@@ -24,7 +24,7 @@ type CommonRingConfig struct {
 func (cfg *CommonRingConfig) RegisterFlags(flagPrefix, kvStorePrefix, defaultRingKey, componentPlural string, f *flag.FlagSet, log log.Logger) {
 	hostname, err := os.Hostname()
 	if err != nil {
-		level.Error(log).Log("msg", "failed to get hostname", "err", err)
+		_ = level.Error(log).Log("msg", "failed to get hostname", "err", err)
 		os.Exit(1)
 	}
 

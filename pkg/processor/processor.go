@@ -61,8 +61,6 @@ type Processor struct {
 	log gklog.Logger
 
 	// Lifetime services
-	processorsLifecycler  *ring.BasicLifecycler
-	processorsRing        *ring.Ring
 	instanceMap           *util.ConcurrentInstanceMap
 	healthyInstancesCount *atomic.Uint32
 	subservices           *services.Manager
@@ -170,11 +168,15 @@ func newRingAndLifecycler(ringCfg ProcessorRingConfig, instanceCount *atomic.Uin
 }
 
 func (p *Processor) start(ctx context.Context) error {
-	p.subservices.StartAsync(ctx)
-	p.subservices.AwaitHealthy(ctx)
+	if err := p.subservices.StartAsync(ctx); err != nil {
+		return err
+	}
+	if err := p.subservices.AwaitHealthy(ctx); err != nil {
+		return err
+	}
 	time.Sleep(beginAfter)
 
-	level.Debug(p.log).Log("msg", "restoring msg queue")
+	_ = level.Debug(p.log).Log("msg", "restoring msg queue")
 	strMsgs, err := p.objStore.ListVersionsWithTypes(ctx)
 	if err != nil {
 		return errors.Wrap(err, "list versions")
@@ -212,6 +214,6 @@ func (p *Processor) start(ctx context.Context) error {
 }
 
 func (p *Processor) stop(err error) error {
-	level.Error(p.log).Log("msg", err.Error())
+	_ = level.Error(p.log).Log("msg", err.Error())
 	return nil
 }

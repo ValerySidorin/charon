@@ -41,16 +41,16 @@ func NewPlugin(cfg Config, log log.Logger) *MockPlugin {
 }
 
 func (m *MockPlugin) Exec(ctx context.Context, stream io.Reader) error {
-	level.Debug(m.log).Log("msg", "mock plugin start")
+	_ = level.Debug(m.log).Log("msg", "mock plugin start")
 	if fail {
 		return errors.New("mock plugin")
 	}
-	level.Debug(m.log).Log("msg", "mock plugin stop")
+	_ = level.Debug(m.log).Log("msg", "mock plugin stop")
 	return nil
 }
 
 func (m *MockPlugin) UpgradeVersion(ctx context.Context, version int) error {
-	level.Debug(m.log).Log("msg", fmt.Sprintf("mock upgrade version to: %d", version))
+	_ = level.Debug(m.log).Log("msg", fmt.Sprintf("mock upgrade version to: %d", version))
 	return nil
 }
 

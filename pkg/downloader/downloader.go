@@ -196,17 +196,21 @@ func newRingAndLifecycler(ringCfg DownloaderRingConfig, instanceCount *atomic.Ui
 }
 
 func (d *Downloader) start(ctx context.Context) error {
-	d.subservices.StartAsync(ctx)
-	d.subservices.AwaitHealthy(ctx)
+	if err := d.subservices.StartAsync(ctx); err != nil {
+		return err
+	}
+	if err := d.subservices.AwaitHealthy(ctx); err != nil {
+		return err
+	}
 	time.Sleep(beginAfter)
 
 	//Check for accidentally dropped downloads
-	level.Debug(d.log).Log("msg", "restoring downloader WAL")
+	_ = level.Debug(d.log).Log("msg", "restoring downloader WAL")
 	if err := d.wal.Lock(ctx); err != nil {
-		level.Error(d.log).Log("msg", err.Error())
+		_ = level.Error(d.log).Log("msg", err.Error())
 
 		if rbErr := d.wal.Unlock(ctx, false); rbErr != nil {
-			level.Error(d.log).Log("msg", rbErr.Error())
+			_ = level.Error(d.log).Log("msg", rbErr.Error())
 			return rbErr
 		}
 
@@ -216,10 +220,10 @@ func (d *Downloader) start(ctx context.Context) error {
 	if d.cfg.StartFrom.FileType == wal.FileTypeFull {
 		rec, found, err := d.wal.GetFirstRecord(ctx)
 		if err != nil {
-			level.Error(d.log).Log("msg", err.Error())
+			_ = level.Error(d.log).Log("msg", err.Error())
 
 			if rbErr := d.wal.Unlock(ctx, false); rbErr != nil {
-				level.Error(d.log).Log("msg", rbErr.Error())
+				_ = level.Error(d.log).Log("msg", rbErr.Error())
 				return rbErr
 			}
 
@@ -228,15 +232,15 @@ func (d *Downloader) start(ctx context.Context) error {
 
 		if found {
 			if rec.Type != wal.FileTypeFull {
-				level.Warn(d.log).Log("msg", "cluster was initially configured to start from diff; picking diff")
+				_ = level.Warn(d.log).Log("msg", "cluster was initially configured to start from diff; picking diff")
 			} else {
-				level.Warn(d.log).Log("msg", "cluster has already downloaded or downloading full; picking diff")
+				_ = level.Warn(d.log).Log("msg", "cluster has already downloaded or downloading full; picking diff")
 			}
 
 			d.fileTypeDownloading = wal.FileTypeDiff
 		} else {
 			if rbErr := d.wal.Unlock(ctx, false); rbErr != nil {
-				level.Error(d.log).Log("msg", rbErr.Error())
+				_ = level.Error(d.log).Log("msg", rbErr.Error())
 				return rbErr
 			}
 
@@ -246,10 +250,10 @@ func (d *Downloader) start(ctx context.Context) error {
 
 	recs, err := d.wal.GetAllRecords(ctx)
 	if err != nil {
-		level.Error(d.log).Log("msg", err.Error())
+		_ = level.Error(d.log).Log("msg", err.Error())
 
 		if rbErr := d.wal.Unlock(ctx, false); rbErr != nil {
-			level.Error(d.log).Log("msg", rbErr.Error())
+			_ = level.Error(d.log).Log("msg", rbErr.Error())
 			return rbErr
 		}
 
@@ -260,12 +264,12 @@ func (d *Downloader) start(ctx context.Context) error {
 		return item.DownloaderID == d.cfg.InstanceID && item.Status == walrec.PROCESSING
 	})
 	if found {
-		level.Debug(d.log).Log("msg", "found lost download record")
+		_ = level.Debug(d.log).Log("msg", "found lost download record")
 		d.currRec = lostRec
 	}
 
 	if cErr := d.wal.Unlock(ctx, true); cErr != nil {
-		level.Error(d.log).Log("msg", cErr.Error())
+		_ = level.Error(d.log).Log("msg", cErr.Error())
 		return cErr
 	}
 	return nil
@@ -284,7 +288,7 @@ func (d *Downloader) run(ctx context.Context) error {
 		//If we don't have our failed downloads, try to steal stale downloads from another members
 		if int(d.HealthyInstancesCount()) < d.downloadersRing.InstancesCount() {
 			if err := d.stealWALRecord(ctx); err != nil {
-				level.Error(d.log).Log("msg", err.Error())
+				_ = level.Error(d.log).Log("msg", err.Error())
 				return nil
 			}
 		}
@@ -300,7 +304,7 @@ func (d *Downloader) run(ctx context.Context) error {
 	//and mark it as processing
 	if d.currRec == nil {
 		if err := d.leaseWALRecord(ctx); err != nil {
-			level.Error(d.log).Log("msg", err.Error())
+			_ = level.Error(d.log).Log("msg", err.Error())
 			if err := d.unlockWALWithRollback(ctx); err != nil {
 				return err
 			}
@@ -325,7 +329,7 @@ func (d *Downloader) run(ctx context.Context) error {
 	}
 
 	if err := d.manager.Download(d.cfg.TempDirWithID, d.currRec.Version, d.currRec.DownloadURL); err != nil {
-		level.Error(d.log).Log("msg", err.Error())
+		_ = level.Error(d.log).Log("msg", err.Error())
 		return nil
 	}
 
@@ -342,13 +346,13 @@ func (d *Downloader) run(ctx context.Context) error {
 
 	file, err := os.Open(fName)
 	if err != nil {
-		level.Error(d.log).Log("msg", err.Error())
+		_ = level.Error(d.log).Log("msg", err.Error())
 		if err := d.unlockWALWithRollback(ctx); err != nil {
 			return err
 		}
 
 		if rmErr := os.RemoveAll(versionedDir); rmErr != nil {
-			level.Error(d.log).Log("msg", rmErr.Error())
+			_ = level.Error(d.log).Log("msg", rmErr.Error())
 			return nil
 		}
 
@@ -356,7 +360,7 @@ func (d *Downloader) run(ctx context.Context) error {
 	}
 
 	if err := d.objStore.Store(ctx, d.currRec.Version, d.currRec.Type, file); err != nil {
-		level.Error(d.log).Log("msg", err.Error())
+		_ = level.Error(d.log).Log("msg", err.Error())
 		if err := d.unlockWALWithRollback(ctx); err != nil {
 			return err
 		}
@@ -365,7 +369,7 @@ func (d *Downloader) run(ctx context.Context) error {
 	file.Close()
 
 	if err := os.RemoveAll(versionedDir); err != nil {
-		level.Error(d.log).Log("msg", err.Error())
+		_ = level.Error(d.log).Log("msg", err.Error())
 		if err := d.unlockWALWithRollback(ctx); err != nil {
 			return err
 		}
@@ -375,7 +379,7 @@ func (d *Downloader) run(ctx context.Context) error {
 
 	d.currRec.Status = walrec.COMPLETED
 	if err := d.wal.UpdateRecord(ctx, d.currRec); err != nil {
-		level.Error(d.log).Log("msg", err.Error())
+		_ = level.Error(d.log).Log("msg", err.Error())
 		return nil
 	}
 
@@ -389,7 +393,7 @@ func (d *Downloader) run(ctx context.Context) error {
 
 // Downloader WAL operations
 func (d *Downloader) stealWALRecord(ctx context.Context) error {
-	level.Debug(d.log).Log("msg", "trying to steal wal record from unhealthy members")
+	_ = level.Debug(d.log).Log("msg", "trying to steal wal record from unhealthy members")
 
 	recs, err := d.wal.GetRecordsByStatus(ctx, walrec.PROCESSING)
 	if err != nil {
@@ -496,7 +500,7 @@ func (d *Downloader) getWALRecordToProcess(ctx context.Context) (*walrec.Record,
 
 func (d *Downloader) lockWAL(ctx context.Context) error {
 	if err := d.wal.Lock(ctx); err != nil {
-		level.Error(d.log).Log("msg", err.Error())
+		_ = level.Error(d.log).Log("msg", err.Error())
 		return err
 	}
 
@@ -505,7 +509,7 @@ func (d *Downloader) lockWAL(ctx context.Context) error {
 
 func (d *Downloader) unlockWALWithRollback(ctx context.Context) error {
 	if err := d.wal.Unlock(ctx, false); err != nil {
-		level.Error(d.log).Log("msg", err.Error())
+		_ = level.Error(d.log).Log("msg", err.Error())
 		return err
 	}
 
@@ -514,7 +518,7 @@ func (d *Downloader) unlockWALWithRollback(ctx context.Context) error {
 
 func (d *Downloader) unlockWALWithCommit(ctx context.Context) error {
 	if err := d.wal.Unlock(ctx, true); err != nil {
-		level.Error(d.log).Log("msg", err.Error())
+		_ = level.Error(d.log).Log("msg", err.Error())
 		return err
 	}
 

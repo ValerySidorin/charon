@@ -32,10 +32,10 @@ func NewClient(retryMax int, timeout time.Duration) *Client {
 
 func (c *Client) GetAllDownloadFileInfo(ctx context.Context) ([]DownloadFileInfo, error) {
 	resp, err := c.httpClient.Get(GetAllDownloadFileInfoUrl)
-	defer resp.Body.Close()
 	if err != nil {
 		return nil, errors.Wrap(err, "get all download file info")
 	}
+	defer resp.Body.Close()
 
 	if err := util_http.EnsureSuccessStatusCode(resp); err != nil {
 		return nil, errors.Wrap(err, "get all download file info")

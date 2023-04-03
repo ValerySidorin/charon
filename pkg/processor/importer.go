@@ -74,7 +74,7 @@ func (i *importer) notify(ctx context.Context) {
 		i.executing.Store(true)
 
 		if err := i.handle(ctx); err != nil {
-			level.Error(i.log).Log("msg", err.Error())
+			_ = level.Error(i.log).Log("msg", err.Error())
 		}
 
 		i.executing.Store(false)
@@ -105,7 +105,7 @@ func (i *importer) handle(ctx context.Context) error {
 
 			recs, loopErr := wal.GetIncompleteRecordsByVersion(ctx, ver)
 			if loopErr != nil {
-				level.Error(i.log).Log("msg", loopErr.Error())
+				_ = level.Error(i.log).Log("msg", loopErr.Error())
 				continue
 			}
 
@@ -130,7 +130,7 @@ func (i *importer) handle(ctx context.Context) error {
 								if ok {
 									healthy, loopErr := i.processorIsHealthy(rec.ProcessorID)
 									if loopErr != nil {
-										level.Error(i.log).Log("msg", loopErr.Error())
+										_ = level.Error(i.log).Log("msg", loopErr.Error())
 										return loopErr
 									}
 
@@ -158,7 +158,7 @@ func (i *importer) handle(ctx context.Context) error {
 
 			if fRec == nil {
 				if loopErr = wal.Unlock(ctx, true); loopErr != nil {
-					level.Error(i.log).Log("msg", loopErr.Error())
+					_ = level.Error(i.log).Log("msg", loopErr.Error())
 				}
 				continue
 			}
@@ -169,28 +169,28 @@ func (i *importer) handle(ctx context.Context) error {
 			}
 
 			if loopErr = wal.Unlock(ctx, true); loopErr != nil {
-				level.Error(i.log).Log("msg", loopErr.Error())
+				_ = level.Error(i.log).Log("msg", loopErr.Error())
 				continue
 			}
 
-			level.Debug(i.log).Log("msg", fmt.Sprintf("start processing: %s", fRec.ObjName))
+			_ = level.Debug(i.log).Log("msg", fmt.Sprintf("start processing: %s", fRec.ObjName))
 			if err := i.plug.Exec(ctx, nil); err != nil {
-				level.Error(i.log).Log("msg", fmt.Sprintf("error loading %s: %s", fRec.ObjName, err.Error()))
+				_ = level.Error(i.log).Log("msg", fmt.Sprintf("error loading %s: %s", fRec.ObjName, err.Error()))
 				continue
 			}
 			fRec.Status = record.COMPLETED
 
 			if loopErr = wal.UpdateRecord(ctx, fRec); loopErr != nil {
-				level.Error(i.log).Log("msg", loopErr.Error())
+				_ = level.Error(i.log).Log("msg", loopErr.Error())
 				continue
 			}
 
-			level.Debug(i.log).Log("msg", fmt.Sprintf("successfully processed: %s", fRec.ObjName))
+			_ = level.Debug(i.log).Log("msg", fmt.Sprintf("successfully processed: %s", fRec.ObjName))
 			continue
 		}
 
 		if loopErr = i.plug.UpgradeVersion(ctx, ver); loopErr != nil {
-			level.Error(i.log).Log("msg", loopErr.Error())
+			_ = level.Error(i.log).Log("msg", loopErr.Error())
 			continue
 		}
 	}
@@ -203,9 +203,9 @@ func (i *importer) handle(ctx context.Context) error {
 }
 
 func (i *importer) unlockWithRollback(ctx context.Context, wal *wal.WAL, err error) {
-	level.Error(i.log).Log("msg", err.Error())
+	_ = level.Error(i.log).Log("msg", err.Error())
 	if rbErr := i.wal.Unlock(ctx, false); rbErr != nil {
-		level.Error(i.log).Log("msg", rbErr.Error())
+		_ = level.Error(i.log).Log("msg", rbErr.Error())
 	}
 }
 

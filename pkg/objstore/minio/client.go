@@ -74,7 +74,7 @@ func NewWriter(cfg Config, bucket string) (*MinioWriter, error) {
 	}
 
 	if !found {
-		if err := minioClient.MakeBucket(context.Background(), bucket, *&minio.MakeBucketOptions{}); err != nil {
+		if err := minioClient.MakeBucket(context.Background(), bucket, minio.MakeBucketOptions{}); err != nil {
 			return nil, errors.Wrap(err, "make minio bucket")
 		}
 	}

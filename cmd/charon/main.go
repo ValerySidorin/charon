@@ -5,10 +5,8 @@ import (
 	"flag"
 	"fmt"
 	"io"
-	"math/rand"
 	"os"
 	"strings"
-	"time"
 
 	"github.com/ValerySidorin/charon/pkg/charon"
 	util_log "github.com/ValerySidorin/charon/pkg/util/log"
@@ -30,9 +28,7 @@ func main() {
 		os.Exit(0)
 	}
 
-	var (
-		cfg charon.Config
-	)
+	var cfg charon.Config
 
 	conf, expandEnv := parseConfigFileParameter(os.Args[1:])
 
@@ -55,12 +51,10 @@ func main() {
 
 	util_log.InitLogger(&cfg.Log)
 
-	rand.Seed(time.Now().UnixNano())
-
 	c, err := charon.New(cfg, prometheus.DefaultRegisterer)
 	util_log.CheckFatal("initializing application", err)
 
-	level.Info(util_log.Logger).Log("msg", "Starting application")
+	_ = level.Info(util_log.Logger).Log("msg", "Starting application")
 
 	err = c.Run()
 

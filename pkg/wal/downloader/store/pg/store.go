@@ -7,7 +7,7 @@ import (
 	"github.com/ValerySidorin/charon/pkg/wal/config/pg"
 	"github.com/ValerySidorin/charon/pkg/wal/downloader/record"
 	"github.com/go-kit/log"
-	"github.com/jackc/pgx/v5"
+	pgx "github.com/jackc/pgx/v5"
 	"github.com/pkg/errors"
 )
 

@@ -60,5 +60,5 @@ func (w *WAL) HasCompletedRecords(ctx context.Context, dID string) (bool, error)
 }
 
 func (w *WAL) Dispose(ctx context.Context) {
-	w.Store.(d_wal_store.Store).Dispose(ctx)
+	_ = w.Store.(d_wal_store.Store).Dispose(ctx)
 }
