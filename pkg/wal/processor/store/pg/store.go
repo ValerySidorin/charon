@@ -4,10 +4,12 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"time"
 
 	"github.com/ValerySidorin/charon/pkg/wal/config/pg"
 	"github.com/ValerySidorin/charon/pkg/wal/processor/record"
 	"github.com/go-kit/log"
+	"github.com/go-kit/log/level"
 	"github.com/jackc/pgx/v5"
 	"github.com/pkg/errors"
 )
@@ -22,9 +24,15 @@ type Store struct {
 }
 
 func NewWALStore(ctx context.Context, name string, cfg pg.Config, log log.Logger) (*Store, error) {
-	conn, err := pgx.Connect(ctx, cfg.Conn)
+	store := &Store{
+		cfg:     cfg,
+		log:     log,
+		tblName: name,
+	}
+
+	err := store.connect(ctx)
 	if err != nil {
-		return nil, errors.Wrap(err, "postgres: init connection")
+		return nil, err
 	}
 
 	q := fmt.Sprintf(`create table if not exists public.%s (
@@ -35,16 +43,41 @@ func NewWALStore(ctx context.Context, name string, cfg pg.Config, log log.Logger
 		type text not null, 
 		status text not null,
 		constraint unique_obj_name unique (obj_name));`, name)
-	if _, err := conn.Exec(ctx, q); err != nil {
+	if _, err := store.conn.Exec(ctx, q); err != nil {
+		store.conn.Close(ctx)
 		return nil, errors.Wrap(err, "postgres: init table")
 	}
 
-	return &Store{
-		cfg:     cfg,
-		log:     log,
-		conn:    conn,
-		tblName: name,
-	}, nil
+	return store, nil
+}
+
+func (s *Store) connect(ctx context.Context) error {
+	var err error
+	s.conn, err = pgx.Connect(ctx, s.cfg.Conn)
+	if err != nil {
+		return errors.Wrap(err, "postgres: init connection")
+	}
+
+	go func() {
+		for {
+			time.Sleep(time.Second)
+
+			err := s.conn.Ping(ctx)
+			if err != nil {
+				_ = level.Warn(s.log).Log("msg", "lost connection to database, attempting to reconnect...")
+				conn, err := pgx.Connect(ctx, s.cfg.Conn)
+				if err != nil {
+					_ = level.Error(s.log).Log("msg", fmt.Sprintf("failed to reconnect to database: %s", err))
+				} else {
+					s.conn.Close(ctx)
+					s.conn = conn
+					_ = level.Info(s.log).Log("msg", "successfully reconnected to database")
+				}
+			}
+		}
+	}()
+
+	return nil
 }
 
 func (s *Store) BeginTransaction(ctx context.Context) error {

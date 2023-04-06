@@ -28,19 +28,19 @@ func (c *Config) RegisterFlags(flagPrefix string, f *flag.FlagSet) {
 	f.StringVar(&c.Type, flagPrefix+"mock.type", "mock", `Mock plugin.`)
 }
 
-type MockPlugin struct {
+type Plugin struct {
 	cfg Config
 	log log.Logger
 }
 
-func NewPlugin(cfg Config, log log.Logger) *MockPlugin {
-	return &MockPlugin{
+func NewPlugin(cfg Config, log log.Logger) (*Plugin, error) {
+	return &Plugin{
 		cfg: cfg,
 		log: log,
-	}
+	}, nil
 }
 
-func (m *MockPlugin) Exec(ctx context.Context, stream io.Reader) error {
+func (m *Plugin) Exec(ctx context.Context, rec *record.Record, stream io.Reader) error {
 	_ = level.Debug(m.log).Log("msg", "mock plugin start")
 	if fail {
 		return errors.New("mock plugin")
@@ -49,22 +49,22 @@ func (m *MockPlugin) Exec(ctx context.Context, stream io.Reader) error {
 	return nil
 }
 
-func (m *MockPlugin) UpgradeVersion(ctx context.Context, version int) error {
+func (m *Plugin) UpgradeVersion(ctx context.Context, version int) error {
 	_ = level.Debug(m.log).Log("msg", fmt.Sprintf("mock upgrade version to: %d", version))
 	return nil
 }
 
-func (m *MockPlugin) GetVersion(ctx context.Context) int {
-	return 20230313
+func (m *Plugin) GetVersion(ctx context.Context) (int, error) {
+	return 20230313, nil
 }
 
-func (m *MockPlugin) Filter(recs []*record.Record) []*record.Record {
+func (m *Plugin) Filter(recs []*record.Record) []*record.Record {
 	return lo.Filter(recs, func(item *record.Record, index int) bool {
 		return strings.Contains(item.ObjName, "OBJECT_LEVEL") || strings.Contains(item.ObjName, "ADM_HIERARCHY") || strings.Contains(item.ObjName, "ADDR_OBJ_2")
 	})
 }
 
-func (m *MockPlugin) GetBatches(recs []*record.Record) []*batch.Batch {
+func (m *Plugin) Batches(recs []*record.Record) []*batch.Batch {
 	sort.Slice(recs[:], func(i, j int) bool {
 		return recs[i].ObjName < recs[j].ObjName
 	})
@@ -86,4 +86,8 @@ func (m *MockPlugin) GetBatches(recs []*record.Record) []*batch.Batch {
 		res[i] = batch.New(uint(i), b)
 	}
 	return res
+}
+
+func (p *Plugin) Dispose(ctx context.Context) error {
+	return nil
 }
