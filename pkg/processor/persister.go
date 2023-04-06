@@ -71,6 +71,18 @@ func (p *persister) start(ctx context.Context, callback func()) {
 			if tryCount > persistMsgTryCount {
 				panic("persister: can't persist received message")
 			}
+
+			v, err := p.plug.GetVersion(ctx)
+			if err != nil {
+				_ = level.Error(p.log).Log("msg", err.Error())
+				tryCount++
+				continue
+			}
+
+			if v >= msg.Version {
+				break
+			}
+
 			objs, err := p.objStore.RetrieveObjNamesByVersion(ctx, msg.Version, msg.Type)
 			if err != nil {
 				_ = level.Error(p.log).Log("msg", err.Error())
@@ -109,6 +121,8 @@ func (p *persister) start(ctx context.Context, callback func()) {
 			processed = true
 		}
 
-		callback()
+		if processed {
+			callback()
+		}
 	}
 }
