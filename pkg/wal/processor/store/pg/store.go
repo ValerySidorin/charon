@@ -11,16 +11,19 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pkg/errors"
 )
 
 type Store struct {
-	cfg     pg.Config
-	log     log.Logger
-	conn    *pgx.Conn
-	tblName string
+	cfg pg.Config
+	log log.Logger
 
-	currTx pgx.Tx
+	cancel chan struct{}
+
+	pool    *pgxpool.Pool
+	currTx  pgx.Tx
+	tblName string
 }
 
 func NewWALStore(ctx context.Context, name string, cfg pg.Config, log log.Logger) (*Store, error) {
@@ -28,6 +31,7 @@ func NewWALStore(ctx context.Context, name string, cfg pg.Config, log log.Logger
 		cfg:     cfg,
 		log:     log,
 		tblName: name,
+		cancel:  make(chan struct{}),
 	}
 
 	err := store.connect(ctx)
@@ -43,8 +47,8 @@ func NewWALStore(ctx context.Context, name string, cfg pg.Config, log log.Logger
 		type text not null, 
 		status text not null,
 		constraint unique_obj_name unique (obj_name));`, name)
-	if _, err := store.conn.Exec(ctx, q); err != nil {
-		store.conn.Close(ctx)
+	if _, err := store.pool.Exec(ctx, q); err != nil {
+		store.pool.Close()
 		return nil, errors.Wrap(err, "postgres: init table")
 	}
 
@@ -53,27 +57,36 @@ func NewWALStore(ctx context.Context, name string, cfg pg.Config, log log.Logger
 
 func (s *Store) connect(ctx context.Context) error {
 	var err error
-	s.conn, err = pgx.Connect(ctx, s.cfg.Conn)
+	s.pool, err = pgxpool.New(ctx, s.cfg.Conn)
 	if err != nil {
 		return errors.Wrap(err, "postgres: init connection")
 	}
 
 	go func() {
-		for {
-			time.Sleep(time.Second)
+		t := time.NewTicker(10 * time.Second)
+		defer t.Stop()
 
-			err := s.conn.Ping(ctx)
+		select {
+		case <-t.C:
+			err := s.pool.Ping(ctx)
 			if err != nil {
-				_ = level.Warn(s.log).Log("msg", "lost connection to database, attempting to reconnect...")
-				conn, err := pgx.Connect(ctx, s.cfg.Conn)
+				_ = level.Warn(s.log).Log("msg", "lost connection to database, attempting to reconnect...", "err", err.Error())
+				pool, err := pgxpool.New(ctx, s.cfg.Conn)
 				if err != nil {
 					_ = level.Error(s.log).Log("msg", fmt.Sprintf("failed to reconnect to database: %s", err))
 				} else {
-					s.conn.Close(ctx)
-					s.conn = conn
+					oldPool := s.pool
+					s.pool = pool
+
+					// Dispose old connection
+					oldPool.Close()
+					s.currTx = nil
+
 					_ = level.Info(s.log).Log("msg", "successfully reconnected to database")
 				}
 			}
+		case <-s.cancel:
+			return
 		}
 	}()
 
@@ -84,7 +97,7 @@ func (s *Store) BeginTransaction(ctx context.Context) error {
 	if s.currTx != nil {
 		return errors.New("postgres: current transaction is not nil")
 	}
-	t, err := s.conn.Begin(ctx)
+	t, err := s.pool.Begin(ctx)
 	if err != nil {
 		return errors.Wrap(err, "postgres: begin transaction")
 	}
@@ -150,7 +163,7 @@ func (s *Store) MergeRecords(ctx context.Context, recs []*record.Record) error {
 		return nil
 	}
 
-	tx, err := s.conn.Begin(ctx)
+	tx, err := s.pool.Begin(ctx)
 	if err != nil {
 		return errors.Wrap(err, "postgres: merge records")
 	}
@@ -190,7 +203,7 @@ func (s *Store) UpdateRecord(ctx context.Context, rec *record.Record) error {
 		return nil
 	}
 
-	_, err := s.conn.Exec(ctx, q, rec.Version, rec.ProcessorID, rec.Type, rec.Status, rec.ObjName)
+	_, err := s.pool.Exec(ctx, q, rec.Version, rec.ProcessorID, rec.Type, rec.Status, rec.ObjName)
 	if err != nil {
 		return errors.Wrap(err, "postgres: update record")
 	}
@@ -220,7 +233,7 @@ func (s *Store) GetRecordsByVersion(ctx context.Context, version int) ([]*record
 		return recs, nil
 	}
 
-	rows, err := s.conn.Query(ctx, q)
+	rows, err := s.pool.Query(ctx, q)
 	if err != nil {
 		return nil, errors.Wrap(err, "postgres: get records by version")
 	}
@@ -254,7 +267,7 @@ func (s *Store) GetLastVersion(ctx context.Context) (int, error) {
 		return int(id.Int64), nil
 	}
 
-	err := s.conn.QueryRow(ctx, q).Scan(&id)
+	err := s.pool.QueryRow(ctx, q).Scan(&id)
 	if err != nil {
 		return 0, errors.Wrap(err, "postgres: get last version")
 	}
@@ -283,7 +296,7 @@ func (s *Store) GetFirstIncompleteVersion(ctx context.Context) (int, error) {
 		return int(id.Int64), nil
 	}
 
-	err := s.conn.QueryRow(ctx, q).Scan(&id)
+	err := s.pool.QueryRow(ctx, q).Scan(&id)
 	if err != nil {
 		return 0, errors.Wrap(err, "postgres: get last version")
 	}
@@ -320,7 +333,7 @@ where version = $1 and status != 'COMPLETED'`, s.tblName)
 		return recs, nil
 	}
 
-	rows, err := s.conn.Query(ctx, q, version)
+	rows, err := s.pool.Query(ctx, q, version)
 	if err != nil {
 		return nil, errors.Wrap(err, "postgres: get incomplete records by version")
 	}
@@ -338,15 +351,16 @@ where version = $1 and status != 'COMPLETED'`, s.tblName)
 }
 
 func (s *Store) Dispose(ctx context.Context) error {
+	s.cancel <- struct{}{}
+	close(s.cancel)
+
 	if s.currTx != nil {
 		if err := s.currTx.Rollback(ctx); err != nil {
 			return errors.Wrap(err, "postgres: rollback transaction")
 		}
 	}
 
-	if err := s.conn.Close(ctx); err != nil {
-		return errors.Wrap(err, "postgres: close connection")
-	}
+	s.pool.Close()
 
 	return nil
 }

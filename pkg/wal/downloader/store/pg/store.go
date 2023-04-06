@@ -11,14 +11,17 @@ import (
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	pgx "github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgxpool"
 	"github.com/pkg/errors"
 )
 
 type Store struct {
-	cfg  pg.Config
-	log  log.Logger
-	conn *pgx.Conn
+	cfg pg.Config
+	log log.Logger
 
+	cancel chan struct{}
+
+	pool   *pgxpool.Pool
 	currTx pgx.Tx
 }
 
@@ -40,7 +43,7 @@ func NewWALStore(ctx context.Context, cfg pg.Config, log log.Logger) (*Store, er
 		type text not null, 
 		status text not null,
 		constraint unique_version unique (version));`
-	if _, err := store.conn.Exec(ctx, q); err != nil {
+	if _, err := store.pool.Exec(ctx, q); err != nil {
 		return nil, errors.Wrap(err, "pg wal store init wal table")
 	}
 
@@ -49,27 +52,36 @@ func NewWALStore(ctx context.Context, cfg pg.Config, log log.Logger) (*Store, er
 
 func (s *Store) connect(ctx context.Context) error {
 	var err error
-	s.conn, err = pgx.Connect(ctx, s.cfg.Conn)
+	s.pool, err = pgxpool.New(ctx, s.cfg.Conn)
 	if err != nil {
 		return errors.Wrap(err, "postgres: init connection")
 	}
 
 	go func() {
-		for {
-			time.Sleep(time.Second)
+		t := time.NewTicker(10 * time.Second)
+		defer t.Stop()
 
-			err := s.conn.Ping(ctx)
+		select {
+		case <-t.C:
+			err := s.pool.Ping(ctx)
 			if err != nil {
-				_ = level.Warn(s.log).Log("msg", "lost connection to database, attempting to reconnect...")
-				conn, err := pgx.Connect(ctx, s.cfg.Conn)
+				_ = level.Warn(s.log).Log("msg", "lost connection to database, attempting to reconnect...", "err", err.Error())
+				pool, err := pgxpool.New(ctx, s.cfg.Conn)
 				if err != nil {
 					_ = level.Error(s.log).Log("msg", fmt.Sprintf("failed to reconnect to database: %s", err))
 				} else {
-					s.conn.Close(ctx)
-					s.conn = conn
+					oldPool := s.pool
+					s.pool = pool
+
+					// Dispose old connection
+					oldPool.Close()
+					s.currTx = nil
+
 					_ = level.Info(s.log).Log("msg", "successfully reconnected to database")
 				}
 			}
+		case <-s.cancel:
+			return
 		}
 	}()
 
@@ -80,7 +92,7 @@ func (s *Store) BeginTransaction(ctx context.Context) error {
 	if s.currTx != nil {
 		return errors.New("pg wal store s.currTx is not null")
 	}
-	t, err := s.conn.Begin(ctx)
+	t, err := s.pool.Begin(ctx)
 	if err != nil {
 		return errors.Wrap(err, "pg wal store begin transation")
 	}
@@ -144,7 +156,7 @@ func (s *Store) GetFirstRecord(ctx context.Context) (*record.Record, bool, error
 		return &rec, true, nil
 	}
 
-	row := s.conn.QueryRow(ctx, q)
+	row := s.pool.QueryRow(ctx, q)
 	if err := scanRecordFromRow(row, &rec); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, false, nil
@@ -176,7 +188,7 @@ func (s *Store) GetAllRecords(ctx context.Context) ([]*record.Record, error) {
 		return recs, nil
 	}
 
-	rows, err := s.conn.Query(ctx, q)
+	rows, err := s.pool.Query(ctx, q)
 	if err != nil {
 		return nil, errors.Wrap(err, "pg wal store query all records")
 	}
@@ -213,7 +225,7 @@ func (s *Store) GetRecordsByStatus(ctx context.Context, status string) ([]*recor
 		return recs, nil
 	}
 
-	rows, err := s.conn.Query(ctx, q, status)
+	rows, err := s.pool.Query(ctx, q, status)
 	if err != nil {
 		return nil, errors.Wrap(err, "pg wal store query records by status")
 	}
@@ -250,7 +262,7 @@ func (s *Store) GetUnsentRecords(ctx context.Context) ([]*record.Record, error) 
 		return recs, nil
 	}
 
-	rows, err := s.conn.Query(ctx, q)
+	rows, err := s.pool.Query(ctx, q)
 	if err != nil {
 		return nil, errors.Wrap(err, "pg wal store query unsent records")
 	}
@@ -279,7 +291,7 @@ func (s *Store) InsertRecord(ctx context.Context, rec *record.Record) error {
 		return nil
 	}
 
-	_, err := s.conn.Exec(ctx, q, rec.Version, rec.DownloaderID, rec.DownloadURL, rec.Type, rec.Status)
+	_, err := s.pool.Exec(ctx, q, rec.Version, rec.DownloaderID, rec.DownloadURL, rec.Type, rec.Status)
 	if err != nil {
 		return errors.Wrap(err, "pg wal store insert record")
 	}
@@ -304,7 +316,7 @@ func (s *Store) UpdateRecord(ctx context.Context, rec *record.Record) error {
 		return nil
 	}
 
-	_, err := s.conn.Exec(ctx, q, rec.Version, rec.DownloaderID, rec.DownloadURL, rec.Type, rec.Status)
+	_, err := s.pool.Exec(ctx, q, rec.Version, rec.DownloaderID, rec.DownloadURL, rec.Type, rec.Status)
 	if err != nil {
 		return errors.Wrap(err, "pg wal store update record")
 	}
@@ -324,7 +336,7 @@ func (s *Store) HasCompletedRecords(ctx context.Context, dID string) (bool, erro
 		return count > 0, nil
 	}
 
-	if err := s.conn.QueryRow(ctx, q, dID).Scan(&count); err != nil {
+	if err := s.pool.QueryRow(ctx, q, dID).Scan(&count); err != nil {
 		return false, errors.Wrap(err, "pg wal store has completed records")
 	}
 
@@ -332,15 +344,16 @@ func (s *Store) HasCompletedRecords(ctx context.Context, dID string) (bool, erro
 }
 
 func (s *Store) Dispose(ctx context.Context) error {
+	s.cancel <- struct{}{}
+	close(s.cancel)
+
 	if s.currTx != nil {
 		if err := s.currTx.Rollback(ctx); err != nil {
-			return errors.Wrap(err, "pg wal store rollback transaction")
+			return errors.Wrap(err, "postgres: rollback transaction")
 		}
 	}
 
-	if err := s.conn.Close(ctx); err != nil {
-		return errors.Wrap(err, "pg wal store close connection")
-	}
+	s.pool.Close()
 
 	return nil
 }

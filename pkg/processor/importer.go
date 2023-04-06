@@ -94,11 +94,15 @@ func (i *importer) handle(ctx context.Context) error {
 	for {
 		ver, loopErr := wal.GetFirstIncompleteVersion(ctx)
 		if loopErr != nil {
+			_ = level.Error(i.log).Log("msg", loopErr.Error())
+			time.Sleep(time.Second)
 			continue
 		}
 
 		currV, loopErr := plug.GetVersion(ctx)
 		if loopErr != nil {
+			_ = level.Error(i.log).Log("msg", loopErr.Error())
+			time.Sleep(time.Second)
 			continue
 		}
 
@@ -109,12 +113,14 @@ func (i *importer) handle(ctx context.Context) error {
 		for {
 			if loopErr := wal.Lock(ctx); loopErr != nil {
 				i.unlockWithRollback(ctx, wal, loopErr)
+				time.Sleep(time.Second)
 				continue
 			}
 
 			recs, loopErr := wal.GetIncompleteRecordsByVersion(ctx, ver)
 			if loopErr != nil {
 				_ = level.Error(i.log).Log("msg", loopErr.Error())
+				time.Sleep(time.Second)
 				continue
 			}
 
@@ -179,12 +185,14 @@ func (i *importer) handle(ctx context.Context) error {
 
 			if loopErr = wal.Unlock(ctx, true); loopErr != nil {
 				_ = level.Error(i.log).Log("msg", loopErr.Error())
+				time.Sleep(time.Second)
 				continue
 			}
 
 			obj, loopErr := i.objStore.Retrieve(ctx, fRec.ObjName)
 			if loopErr != nil {
 				_ = level.Error(i.log).Log("msg", loopErr.Error())
+				time.Sleep(time.Second)
 				continue
 			}
 			defer obj.Close()
@@ -198,6 +206,7 @@ func (i *importer) handle(ctx context.Context) error {
 
 			if loopErr = wal.UpdateRecord(ctx, fRec); loopErr != nil {
 				_ = level.Error(i.log).Log("msg", loopErr.Error())
+				time.Sleep(time.Second)
 				continue
 			}
 
@@ -207,12 +216,9 @@ func (i *importer) handle(ctx context.Context) error {
 
 		if loopErr = plug.UpgradeVersion(ctx, ver); loopErr != nil {
 			_ = level.Error(i.log).Log("msg", loopErr.Error())
+			time.Sleep(time.Second)
 			continue
 		}
-	}
-
-	if err := wal.Dispose(ctx); err != nil {
-		return err
 	}
 
 	return loopErr
