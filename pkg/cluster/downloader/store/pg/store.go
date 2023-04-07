@@ -36,7 +36,7 @@ func NewClusterStore(ctx context.Context, cfg pg.Config, log log.Logger) (*Store
 		return nil, err
 	}
 
-	q := `create table if not exists public.downloader_wal (
+	q := `create table if not exists public.downloader_cluster (
 		version integer not null, 
 		downloader_id text not null, 
 		download_url text not null, 
@@ -131,7 +131,7 @@ func (s *Store) LockAllRecords(ctx context.Context) error {
 		return errors.New("pg wal store can't lock table without transaction")
 	}
 
-	q := "lock table downloader_wal in access exclusive mode;"
+	q := "lock table downloader_cluster in access exclusive mode;"
 	_, err := s.currTx.Exec(ctx, q)
 	if err != nil {
 		return errors.Wrap(err, "pg wal store lock table")
@@ -141,7 +141,7 @@ func (s *Store) LockAllRecords(ctx context.Context) error {
 }
 
 func (s *Store) GetFirstRecord(ctx context.Context) (*record.Record, bool, error) {
-	q := "select version, downloader_id, download_url, type, status from downloader_wal limit 1"
+	q := "select version, downloader_id, download_url, type, status from downloader_cluster limit 1"
 	var rec record.Record
 
 	if s.currTx != nil {
@@ -168,7 +168,7 @@ func (s *Store) GetFirstRecord(ctx context.Context) (*record.Record, bool, error
 }
 
 func (s *Store) GetAllRecords(ctx context.Context) ([]*record.Record, error) {
-	q := "select version, downloader_id, download_url, type, status from downloader_wal;"
+	q := "select version, downloader_id, download_url, type, status from downloader_cluster;"
 	recs := make([]*record.Record, 0)
 
 	if s.currTx != nil {
@@ -205,7 +205,7 @@ func (s *Store) GetAllRecords(ctx context.Context) ([]*record.Record, error) {
 }
 
 func (s *Store) GetRecordsByStatus(ctx context.Context, status string) ([]*record.Record, error) {
-	q := "select version, downloader_id, download_url, type, status from downloader_wal where status = $1;"
+	q := "select version, downloader_id, download_url, type, status from downloader_cluster where status = $1;"
 	recs := make([]*record.Record, 0)
 
 	if s.currTx != nil {
@@ -242,7 +242,7 @@ func (s *Store) GetRecordsByStatus(ctx context.Context, status string) ([]*recor
 }
 
 func (s *Store) GetUnsentRecords(ctx context.Context) ([]*record.Record, error) {
-	q := "select version, downloader_id, download_url, type, status from downloader_wal where status != 'SENT';"
+	q := "select version, downloader_id, download_url, type, status from downloader_cluster where status != 'SENT';"
 	recs := make([]*record.Record, 0)
 
 	if s.currTx != nil {
@@ -279,7 +279,7 @@ func (s *Store) GetUnsentRecords(ctx context.Context) ([]*record.Record, error) 
 }
 
 func (s *Store) InsertRecord(ctx context.Context, rec *record.Record) error {
-	q := `insert into downloader_wal(version, downloader_id, download_url, type, status)
+	q := `insert into downloader_cluster(version, downloader_id, download_url, type, status)
 	values($1, $2, $3, $4, $5);`
 
 	if s.currTx != nil {
@@ -300,7 +300,7 @@ func (s *Store) InsertRecord(ctx context.Context, rec *record.Record) error {
 }
 
 func (s *Store) UpdateRecord(ctx context.Context, rec *record.Record) error {
-	q := `update downloader_wal
+	q := `update downloader_cluster
 	set downloader_id = $2,
 	download_url = $3,
 	type = $4,
@@ -326,7 +326,7 @@ func (s *Store) UpdateRecord(ctx context.Context, rec *record.Record) error {
 
 func (s *Store) HasCompletedRecords(ctx context.Context, dID string) (bool, error) {
 	var count int
-	q := "select count(version) from downloader_wal where downloader_id = $1 and status = 'COMPLETED'"
+	q := "select count(version) from downloader_cluster where downloader_id = $1 and status = 'COMPLETED'"
 
 	if s.currTx != nil {
 		if err := s.currTx.QueryRow(ctx, q, dID).Scan(&count); err != nil {

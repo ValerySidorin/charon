@@ -19,6 +19,6 @@ type StoreConfig struct {
 func (c *Config) RegisterFlags(flagPrefix string, f *flag.FlagSet) {
 	c.Pg.RegisterFlags(flagPrefix, f)
 
-	f.StringVar(&c.Name, flagPrefix+"name", "", `WAL name. Available for processor only.`)
+	f.StringVar(&c.Name, flagPrefix+"name", "processor_cluster", `Cluster store name. Available for processor only.`)
 	f.StringVar(&c.Store, flagPrefix+"store", "memberlist", `Store, that will be used to persist WAL.`)
 }
