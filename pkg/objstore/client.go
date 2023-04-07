@@ -14,8 +14,8 @@ const (
 )
 
 type Config struct {
-	Store string       `yaml:"store"`
-	Minio minio.Config `yaml:"minio"`
+	Store string       `mapstructure:"store"`
+	Minio minio.Config `mapstructure:"minio"`
 }
 
 func (c *Config) RegisterFlags(flagPrefix string, f *flag.FlagSet) {

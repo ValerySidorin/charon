@@ -1,7 +1,7 @@
 package batch
 
 import (
-	"github.com/ValerySidorin/charon/pkg/wal/processor/record"
+	"github.com/ValerySidorin/charon/pkg/cluster/processor/record"
 	"github.com/samber/lo"
 )
 

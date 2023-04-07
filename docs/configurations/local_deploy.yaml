@@ -27,16 +27,16 @@ downloader:
       endpoint: "localhost:9000"
       minio_root_user: charon
       minio_root_password: charonpwd
-  wal:
+  cluster:
     store: pg
     pg:
-      conn: postgres://charon:charonpwd@localhost:5432/charon
+      conn: "postgres://charon:charonpwd@localhost:5432/charon"
   notifier:
     check_interval: 10s
     queue:
       type: nats
       nats:
-        url: nats://charon:charonpwd@localhost:4222
+        url: "nats://charon:charonpwd@localhost:4222"
 
 processor:
   msg_buffer: 100
@@ -57,15 +57,15 @@ processor:
       endpoint: "localhost:9000"
       minio_root_user: charon
       minio_root_password: charonpwd
-  wal:
+  cluster:
     name: processor_wal
     store: pg
     pg:
-      conn: postgres://charon:charonpwd@localhost:5432/charon
+      conn: "postgres://charon:charonpwd@localhost:5432/charon"
   queue:
     type: nats
     nats:
-      url: nats://charon:charonpwd@localhost:4222
+      url: "nats://charon:charonpwd@localhost:4222"
   plugin:
     mock:
-      type: mock
+      type: mock222

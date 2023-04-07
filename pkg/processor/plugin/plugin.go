@@ -5,15 +5,15 @@ import (
 	"flag"
 	"io"
 
+	"github.com/ValerySidorin/charon/pkg/cluster/processor/record"
 	"github.com/ValerySidorin/charon/pkg/processor/batch"
 	"github.com/ValerySidorin/charon/pkg/processor/plugin/mock"
-	"github.com/ValerySidorin/charon/pkg/wal/processor/record"
 	"github.com/go-kit/log"
 	"github.com/pkg/errors"
 )
 
 type Config struct {
-	Mock mock.Config `yaml:"mock"`
+	Mock mock.Config `mapstructure:"mock"`
 }
 
 func (c *Config) RegisterFlags(flagPrefix string, f *flag.FlagSet) {

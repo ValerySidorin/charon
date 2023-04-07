@@ -3,10 +3,10 @@ package store
 import (
 	"context"
 
-	"github.com/ValerySidorin/charon/pkg/wal"
-	"github.com/ValerySidorin/charon/pkg/wal/config"
-	"github.com/ValerySidorin/charon/pkg/wal/downloader/record"
-	"github.com/ValerySidorin/charon/pkg/wal/downloader/store/pg"
+	wal "github.com/ValerySidorin/charon/pkg/cluster"
+	"github.com/ValerySidorin/charon/pkg/cluster/config"
+	"github.com/ValerySidorin/charon/pkg/cluster/downloader/record"
+	"github.com/ValerySidorin/charon/pkg/cluster/downloader/store/pg"
 	"github.com/go-kit/log"
 	"github.com/pkg/errors"
 )
@@ -22,10 +22,10 @@ type Store interface {
 	HasCompletedRecords(ctx context.Context, dID string) (bool, error)
 }
 
-func NewWALStore(ctx context.Context, cfg config.Config, log log.Logger) (Store, error) {
+func NewClusterStore(ctx context.Context, cfg config.Config, log log.Logger) (Store, error) {
 	switch cfg.Store {
 	case "pg":
-		return pg.NewWALStore(ctx, cfg.Pg, log)
+		return pg.NewClusterStore(ctx, cfg.Pg, log)
 	default:
 		return nil, errors.New("invalid store in config")
 	}

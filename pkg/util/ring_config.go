@@ -8,17 +8,16 @@ import (
 
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
-	"github.com/grafana/dskit/kv"
 )
 
 type CommonRingConfig struct {
-	Key              string        `yaml:"key"`
-	HeartbeatPeriod  time.Duration `yaml:"heartbeat_period" category:"advanced"`
-	HeartbeatTimeout time.Duration `yaml:"heartbeat_timeout" category:"advanced"`
+	Key              string        `mapstructure:"key"`
+	HeartbeatPeriod  time.Duration `mapstructure:"heartbeat_period"`
+	HeartbeatTimeout time.Duration `mapstructure:"heartbeat_timeout"`
 
-	InstanceID string `yaml:"instance_id" doc:"default=<hostname>" category:"advanced"`
+	InstanceID string `mapstructure:"instance_id"`
 
-	KVStore kv.Config `yaml:"kvstore"`
+	KVStore CommonKVConfig `mapstructure:"kvstore"`
 }
 
 func (cfg *CommonRingConfig) RegisterFlags(flagPrefix, kvStorePrefix, defaultRingKey, componentPlural string, f *flag.FlagSet, log log.Logger) {

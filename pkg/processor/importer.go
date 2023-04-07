@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"time"
 
+	cluster "github.com/ValerySidorin/charon/pkg/cluster/processor"
+	"github.com/ValerySidorin/charon/pkg/cluster/processor/record"
 	"github.com/ValerySidorin/charon/pkg/objstore"
 	"github.com/ValerySidorin/charon/pkg/processor/plugin"
 	"github.com/ValerySidorin/charon/pkg/util"
-	wal "github.com/ValerySidorin/charon/pkg/wal/processor"
-	"github.com/ValerySidorin/charon/pkg/wal/processor/record"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/grafana/dskit/ring"
@@ -22,8 +22,8 @@ type importer struct {
 	cfg Config
 	log log.Logger
 
-	wal      *wal.WAL
-	objStore objstore.Reader
+	clusterMonitor *cluster.Monitor
+	objStore       objstore.Reader
 
 	executing *atomic.Bool
 
@@ -39,7 +39,7 @@ func newImporter(ctx context.Context, ring *ring.Ring, lifecycler *ring.BasicLif
 		return nil, errors.Wrap(err, "importer: connect to diff store")
 	}
 
-	wal, err := wal.NewWAL(ctx, cfg.WAL, log)
+	monitor, err := cluster.NewMonitor(ctx, cfg.Cluster, log)
 	if err != nil {
 		return nil, errors.Wrap(err, "importer: connect to wal")
 	}
@@ -48,8 +48,8 @@ func newImporter(ctx context.Context, ring *ring.Ring, lifecycler *ring.BasicLif
 		cfg: cfg,
 		log: log,
 
-		objStore: reader,
-		wal:      wal,
+		objStore:       reader,
+		clusterMonitor: monitor,
 
 		processorsRing:       ring,
 		processorsLifecycler: lifecycler,
@@ -82,17 +82,17 @@ func (i *importer) handle(ctx context.Context) error {
 		_ = plug.Dispose(ctx)
 	}()
 
-	wal, err := wal.NewWAL(ctx, i.cfg.WAL, i.log)
+	monitor, err := cluster.NewMonitor(ctx, i.cfg.Cluster, i.log)
 	if err != nil {
 		return errors.Wrap(err, "persister: connect to wal")
 	}
 	defer func() {
-		_ = wal.Dispose(ctx)
+		_ = monitor.Dispose(ctx)
 	}()
 
 	var loopErr error
 	for {
-		ver, loopErr := wal.GetFirstIncompleteVersion(ctx)
+		ver, loopErr := monitor.GetFirstIncompleteVersion(ctx)
 		if loopErr != nil {
 			_ = level.Error(i.log).Log("msg", loopErr.Error())
 			time.Sleep(time.Second)
@@ -111,13 +111,13 @@ func (i *importer) handle(ctx context.Context) error {
 		}
 
 		for {
-			if loopErr := wal.Lock(ctx); loopErr != nil {
-				i.unlockWithRollback(ctx, wal, loopErr)
+			if loopErr := monitor.Lock(ctx); loopErr != nil {
+				i.unlockWithRollback(ctx, monitor, loopErr)
 				time.Sleep(time.Second)
 				continue
 			}
 
-			recs, loopErr := wal.GetIncompleteRecordsByVersion(ctx, ver)
+			recs, loopErr := monitor.GetIncompleteRecordsByVersion(ctx, ver)
 			if loopErr != nil {
 				_ = level.Error(i.log).Log("msg", loopErr.Error())
 				time.Sleep(time.Second)
@@ -125,6 +125,11 @@ func (i *importer) handle(ctx context.Context) error {
 			}
 
 			if len(recs) <= 0 {
+				if loopErr = monitor.Unlock(ctx, true); loopErr != nil {
+					_ = level.Error(i.log).Log("msg", loopErr.Error())
+					i.unlockWithRollback(ctx, monitor, loopErr)
+					continue
+				}
 				break
 			}
 
@@ -172,20 +177,21 @@ func (i *importer) handle(ctx context.Context) error {
 			}
 
 			if fRec == nil {
-				if loopErr = wal.Unlock(ctx, true); loopErr != nil {
+				if loopErr = monitor.Unlock(ctx, true); loopErr != nil {
 					_ = level.Error(i.log).Log("msg", loopErr.Error())
+					i.unlockWithRollback(ctx, monitor, loopErr)
 				}
 				continue
 			}
 
-			if loopErr = wal.UpdateRecord(ctx, fRec); loopErr != nil {
-				i.unlockWithRollback(ctx, wal, loopErr)
+			if loopErr = monitor.UpdateRecord(ctx, fRec); loopErr != nil {
+				i.unlockWithRollback(ctx, monitor, loopErr)
 				continue
 			}
 
-			if loopErr = wal.Unlock(ctx, true); loopErr != nil {
+			if loopErr = monitor.Unlock(ctx, true); loopErr != nil {
 				_ = level.Error(i.log).Log("msg", loopErr.Error())
-				time.Sleep(time.Second)
+				i.unlockWithRollback(ctx, monitor, loopErr)
 				continue
 			}
 
@@ -204,7 +210,7 @@ func (i *importer) handle(ctx context.Context) error {
 			}
 			fRec.Status = record.COMPLETED
 
-			if loopErr = wal.UpdateRecord(ctx, fRec); loopErr != nil {
+			if loopErr = monitor.UpdateRecord(ctx, fRec); loopErr != nil {
 				_ = level.Error(i.log).Log("msg", loopErr.Error())
 				time.Sleep(time.Second)
 				continue
@@ -224,9 +230,9 @@ func (i *importer) handle(ctx context.Context) error {
 	return loopErr
 }
 
-func (i *importer) unlockWithRollback(ctx context.Context, wal *wal.WAL, err error) {
+func (i *importer) unlockWithRollback(ctx context.Context, monitor *cluster.Monitor, err error) {
 	_ = level.Error(i.log).Log("msg", err.Error())
-	if rbErr := i.wal.Unlock(ctx, false); rbErr != nil {
+	if rbErr := monitor.Unlock(ctx, false); rbErr != nil {
 		_ = level.Error(i.log).Log("msg", rbErr.Error())
 	}
 

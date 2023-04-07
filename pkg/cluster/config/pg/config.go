@@ -3,7 +3,7 @@ package pg
 import "flag"
 
 type Config struct {
-	Conn string `yaml:"conn"`
+	Conn string `mapstructure:"conn"`
 }
 
 func (c *Config) RegisterFlags(flagPrefix string, f *flag.FlagSet) {

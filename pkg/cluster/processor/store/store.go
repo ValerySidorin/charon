@@ -4,15 +4,15 @@ import (
 	"context"
 	"errors"
 
-	"github.com/ValerySidorin/charon/pkg/wal"
-	"github.com/ValerySidorin/charon/pkg/wal/config"
-	"github.com/ValerySidorin/charon/pkg/wal/processor/record"
-	"github.com/ValerySidorin/charon/pkg/wal/processor/store/pg"
+	"github.com/ValerySidorin/charon/pkg/cluster"
+	"github.com/ValerySidorin/charon/pkg/cluster/config"
+	"github.com/ValerySidorin/charon/pkg/cluster/processor/record"
+	"github.com/ValerySidorin/charon/pkg/cluster/processor/store/pg"
 	"github.com/go-kit/log"
 )
 
 type Store interface {
-	wal.CommonStore
+	cluster.CommonStore
 	MergeRecords(ctx context.Context, recs []*record.Record) error
 	UpdateRecord(ctx context.Context, rec *record.Record) error
 	GetRecordsByVersion(ctx context.Context, version int) ([]*record.Record, error)
@@ -21,10 +21,10 @@ type Store interface {
 	GetIncompleteRecordsByVersion(ctx context.Context, version int) ([]*record.Record, error)
 }
 
-func NewWALStore(ctx context.Context, cfg config.Config, log log.Logger) (Store, error) {
+func NewClusterStore(ctx context.Context, cfg config.Config, log log.Logger) (Store, error) {
 	switch cfg.Store {
 	case "pg":
-		return pg.NewWALStore(ctx, cfg.Name, cfg.Pg, log)
+		return pg.NewClusterStore(ctx, cfg.Name, cfg.Pg, log)
 	default:
 		return nil, errors.New("invalid store in config")
 	}

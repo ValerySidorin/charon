@@ -10,7 +10,7 @@ import (
 )
 
 type ProcessorRingConfig struct {
-	Common util.CommonRingConfig `yaml:",inline"`
+	Common util.CommonRingConfig `mapstructure:",squash"`
 }
 
 func (c *ProcessorRingConfig) RegisterFlags(f *flag.FlagSet, log log.Logger) {
@@ -32,7 +32,7 @@ func (cfg *ProcessorRingConfig) toRingConfig() ring.Config {
 	rc := ring.Config{}
 	flagext.DefaultValues(&rc)
 
-	rc.KVStore = cfg.Common.KVStore
+	rc.KVStore = cfg.Common.KVStore.ToKVConfig()
 	rc.HeartbeatTimeout = cfg.Common.HeartbeatTimeout
 	rc.ReplicationFactor = 1
 

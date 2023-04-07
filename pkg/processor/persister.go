@@ -4,11 +4,11 @@ import (
 	"context"
 	"fmt"
 
+	cluster "github.com/ValerySidorin/charon/pkg/cluster/processor"
+	"github.com/ValerySidorin/charon/pkg/cluster/processor/record"
 	"github.com/ValerySidorin/charon/pkg/objstore"
 	"github.com/ValerySidorin/charon/pkg/processor/plugin"
 	"github.com/ValerySidorin/charon/pkg/queue/message"
-	wal "github.com/ValerySidorin/charon/pkg/wal/processor"
-	"github.com/ValerySidorin/charon/pkg/wal/processor/record"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/pkg/errors"
@@ -19,9 +19,9 @@ type persister struct {
 	cfg Config
 	log log.Logger
 
-	objStore objstore.Reader
-	wal      *wal.WAL
-	msgCh    chan *message.Message
+	objStore       objstore.Reader
+	clusterMonitor *cluster.Monitor
+	msgCh          chan *message.Message
 
 	plug plugin.Plugin
 }
@@ -32,7 +32,7 @@ func newPersister(ctx context.Context, cfg Config, log log.Logger) (*persister, 
 		return nil, errors.Wrap(err, "persister: connect to diff store")
 	}
 
-	wal, err := wal.NewWAL(ctx, cfg.WAL, log)
+	monitor, err := cluster.NewMonitor(ctx, cfg.Cluster, log)
 	if err != nil {
 		return nil, errors.Wrap(err, "persister: connect to processor wal")
 	}
@@ -43,12 +43,12 @@ func newPersister(ctx context.Context, cfg Config, log log.Logger) (*persister, 
 	}
 
 	return &persister{
-		cfg:      cfg,
-		log:      log,
-		objStore: reader,
-		wal:      wal,
-		msgCh:    make(chan *message.Message, cfg.MsgBuffer),
-		plug:     plug,
+		cfg:            cfg,
+		log:            log,
+		objStore:       reader,
+		clusterMonitor: monitor,
+		msgCh:          make(chan *message.Message, cfg.MsgBuffer),
+		plug:           plug,
 	}, nil
 }
 
@@ -94,24 +94,24 @@ func (p *persister) start(ctx context.Context, callback func()) {
 			})
 			recs = p.plug.Filter(recs)
 
-			if err := p.wal.Lock(ctx); err != nil {
+			if err := p.clusterMonitor.Lock(ctx); err != nil {
 				_ = level.Error(p.log).Log("msg", err.Error())
-				if rbErr := p.wal.Unlock(ctx, false); rbErr != nil {
+				if rbErr := p.clusterMonitor.Unlock(ctx, false); rbErr != nil {
 					_ = level.Error(p.log).Log("msg", rbErr.Error())
 					tryCount++
 					continue
 				}
 			}
 
-			if err := p.wal.MergeRecords(ctx, recs); err != nil {
-				if rbErr := p.wal.Unlock(ctx, false); rbErr != nil {
+			if err := p.clusterMonitor.MergeRecords(ctx, recs); err != nil {
+				if rbErr := p.clusterMonitor.Unlock(ctx, false); rbErr != nil {
 					_ = level.Error(p.log).Log("msg", rbErr.Error())
 					tryCount++
 					continue
 				}
 			}
 
-			if err := p.wal.Unlock(ctx, true); err != nil {
+			if err := p.clusterMonitor.Unlock(ctx, true); err != nil {
 				_ = level.Error(p.log).Log("msg", err.Error())
 				tryCount++
 				continue

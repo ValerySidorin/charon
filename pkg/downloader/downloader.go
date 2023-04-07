@@ -9,15 +9,15 @@ import (
 	"strconv"
 	"time"
 
+	"github.com/ValerySidorin/charon/pkg/cluster"
+	cl_cfg "github.com/ValerySidorin/charon/pkg/cluster/config"
+	d_cluster "github.com/ValerySidorin/charon/pkg/cluster/downloader"
+	cl_rec "github.com/ValerySidorin/charon/pkg/cluster/downloader/record"
 	"github.com/ValerySidorin/charon/pkg/downloader/fiasnalog"
 	"github.com/ValerySidorin/charon/pkg/downloader/manager"
 	"github.com/ValerySidorin/charon/pkg/downloader/notifier"
 	"github.com/ValerySidorin/charon/pkg/objstore"
 	"github.com/ValerySidorin/charon/pkg/util"
-	"github.com/ValerySidorin/charon/pkg/wal"
-	walcfg "github.com/ValerySidorin/charon/pkg/wal/config"
-	dwal "github.com/ValerySidorin/charon/pkg/wal/downloader"
-	walrec "github.com/ValerySidorin/charon/pkg/wal/downloader/record"
 	gklog "github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/grafana/dskit/kv"
@@ -53,41 +53,41 @@ type Downloader struct {
 	fiasNalogClient *fiasnalog.Client
 	manager         *manager.Manager
 
-	notifier *notifier.Notifier
-	wal      *dwal.WAL
-	currRec  *walrec.Record
+	notifier       *notifier.Notifier
+	clusterMonitor *d_cluster.Monitor
+	currRec        *cl_rec.Record
 
 	fileTypeDownloading string
 }
 
 type Config struct {
-	StartFrom       StartFromConfig `yaml:"start_from"`
-	PollingInterval time.Duration   `yaml:"polling_interval"`
-	TempDir         string          `yaml:"temp_dir"`
-	TempDirWithID   string          `yaml:"-"`
-	InstanceID      string          `yaml:"-"`
+	StartFrom       StartFromConfig `mapstructure:"start_from"`
+	PollingInterval time.Duration   `mapstructure:"polling_interval"`
+	TempDir         string          `mapstructure:"temp_dir"`
+	TempDirWithID   string          `mapstructure:"-"`
+	InstanceID      string          `mapstructure:"-"`
 
 	//Manager
-	BufferSize int `yaml:"buffer_size"`
+	BufferSize int `mapstructure:"buffer_size"`
 
 	//Fias Nalog client
-	Timeout  time.Duration `yaml:"timeout"`
-	RetryMax int           `yaml:"retry_max"`
+	Timeout  time.Duration `mapstructure:"timeout"`
+	RetryMax int           `mapstructure:"retry_max"`
 
-	DownloadersRing DownloaderRingConfig `yaml:"ring"`
+	DownloadersRing DownloaderRingConfig `mapstructure:"ring"`
 
-	WAL      walcfg.Config   `yaml:"wal"`
-	ObjStore objstore.Config `yaml:"objstore"`
-	Notifier notifier.Config `yaml:"notifier"`
+	Cluster  cl_cfg.Config   `mapstructure:"cluster"`
+	ObjStore objstore.Config `mapstructure:"objstore"`
+	Notifier notifier.Config `mapstructure:"notifier"`
 }
 
 type StartFromConfig struct {
-	FileType string `yaml:"file_type"`
-	Version  int    `yaml:"version"`
+	FileType string `mapstructure:"file_type"`
+	Version  int    `mapstructure:"version"`
 }
 
 func (c *StartFromConfig) RegisterFlags(f *flag.FlagSet, log gklog.Logger) {
-	f.StringVar(&c.FileType, "downloader.start-from.file-type", wal.FileTypeFull, `What type of file to start from.
+	f.StringVar(&c.FileType, "downloader.start-from.file-type", cluster.FileTypeFull, `What type of file to start from.
 	Available values: DIFF, FULL`)
 	f.IntVar(&c.Version, "downloader.start-from.version", 0, "What version to start from.")
 }
@@ -95,7 +95,7 @@ func (c *StartFromConfig) RegisterFlags(f *flag.FlagSet, log gklog.Logger) {
 func (c *Config) RegisterFlags(f *flag.FlagSet, log gklog.Logger) {
 	c.StartFrom.RegisterFlags(f, log)
 	c.DownloadersRing.RegisterFlags(f, log)
-	c.WAL.RegisterFlags("downloader.wal.", f)
+	c.Cluster.RegisterFlags("downloader.cluster.", f)
 	c.ObjStore.RegisterFlags("downloader.objstore.", f)
 	c.Notifier.RegisterFlags("downloader.notifier.", f)
 
@@ -119,7 +119,7 @@ func New(ctx context.Context, cfg Config, reg prometheus.Registerer, log gklog.L
 		return nil, errors.Wrap(err, "downloader connect to obj store as writer")
 	}
 
-	wal, err := dwal.NewWAL(ctx, cfg.WAL, log)
+	monitor, err := d_cluster.NewMonitor(ctx, cfg.Cluster, log)
 	if err != nil {
 		return nil, errors.Wrap(err, "downloader connect to WAL")
 	}
@@ -132,14 +132,14 @@ func New(ctx context.Context, cfg Config, reg prometheus.Registerer, log gklog.L
 		manager:               manager.New(cfg.BufferSize, log),
 		healthyInstancesCount: atomic.NewUint32(0),
 		instanceMap:           util.NewConcurrentInstanceMap(),
-		wal:                   wal,
+		clusterMonitor:        monitor,
 		fileTypeDownloading:   cfg.StartFrom.FileType,
 	}
 
 	d.Service = services.NewTimerService(
 		cfg.PollingInterval, d.start, d.run, nil)
 
-	notifier, err := notifier.New(ctx, cfg.Notifier, cfg.WAL, cfg.InstanceID, log)
+	notifier, err := notifier.New(ctx, cfg.Notifier, cfg.Cluster, cfg.InstanceID, log)
 	if err != nil {
 		return nil, errors.Wrap(err, "downloader init notifier")
 	}
@@ -165,7 +165,8 @@ func New(ctx context.Context, cfg Config, reg prometheus.Registerer, log gklog.L
 
 func newRingAndLifecycler(ringCfg DownloaderRingConfig, instanceCount *atomic.Uint32, instances *util.ConcurrentInstanceMap, logger gklog.Logger, reg prometheus.Registerer) (*ring.Ring, *ring.BasicLifecycler, error) {
 	reg = prometheus.WrapRegistererWithPrefix("charon_", reg)
-	kvStore, err := kv.NewClient(ringCfg.Common.KVStore, ring.GetCodec(), kv.RegistererWithKVName(reg, "downloader-lifecycler"), logger)
+	rCfg := ringCfg.toRingConfig()
+	kvStore, err := kv.NewClient(rCfg.KVStore, ring.GetCodec(), kv.RegistererWithKVName(reg, "downloader-lifecycler"), logger)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "failed to initialize downloader' KV store")
 	}
@@ -187,7 +188,7 @@ func newRingAndLifecycler(ringCfg DownloaderRingConfig, instanceCount *atomic.Ui
 		return nil, nil, errors.Wrap(err, "failed to initialize downloaders' lifecycler")
 	}
 
-	downloadersRing, err := ring.New(ringCfg.toRingConfig(), ringCfg.Common.Key, downloaderRingKey, logger, reg)
+	downloadersRing, err := ring.New(rCfg, ringCfg.Common.Key, downloaderRingKey, logger, reg)
 	if err != nil {
 		return nil, nil, errors.Wrap(err, "failed to initialize downloaders' ring client")
 	}
@@ -206,10 +207,10 @@ func (d *Downloader) start(ctx context.Context) error {
 
 	//Check for accidentally dropped downloads
 	_ = level.Debug(d.log).Log("msg", "restoring downloader WAL")
-	if err := d.wal.Lock(ctx); err != nil {
+	if err := d.clusterMonitor.Lock(ctx); err != nil {
 		_ = level.Error(d.log).Log("msg", err.Error())
 
-		if rbErr := d.wal.Unlock(ctx, false); rbErr != nil {
+		if rbErr := d.clusterMonitor.Unlock(ctx, false); rbErr != nil {
 			_ = level.Error(d.log).Log("msg", rbErr.Error())
 			return rbErr
 		}
@@ -217,12 +218,12 @@ func (d *Downloader) start(ctx context.Context) error {
 		return err
 	}
 
-	if d.cfg.StartFrom.FileType == wal.FileTypeFull {
-		rec, found, err := d.wal.GetFirstRecord(ctx)
+	if d.cfg.StartFrom.FileType == cluster.FileTypeFull {
+		rec, found, err := d.clusterMonitor.GetFirstRecord(ctx)
 		if err != nil {
 			_ = level.Error(d.log).Log("msg", err.Error())
 
-			if rbErr := d.wal.Unlock(ctx, false); rbErr != nil {
+			if rbErr := d.clusterMonitor.Unlock(ctx, false); rbErr != nil {
 				_ = level.Error(d.log).Log("msg", rbErr.Error())
 				return rbErr
 			}
@@ -231,15 +232,15 @@ func (d *Downloader) start(ctx context.Context) error {
 		}
 
 		if found {
-			if rec.Type != wal.FileTypeFull {
+			if rec.Type != cluster.FileTypeFull {
 				_ = level.Warn(d.log).Log("msg", "cluster was initially configured to start from diff; picking diff")
 			} else {
 				_ = level.Warn(d.log).Log("msg", "cluster has already downloaded or downloading full; picking diff")
 			}
 
-			d.fileTypeDownloading = wal.FileTypeDiff
+			d.fileTypeDownloading = cluster.FileTypeDiff
 		} else {
-			if rbErr := d.wal.Unlock(ctx, false); rbErr != nil {
+			if rbErr := d.clusterMonitor.Unlock(ctx, false); rbErr != nil {
 				_ = level.Error(d.log).Log("msg", rbErr.Error())
 				return rbErr
 			}
@@ -248,11 +249,11 @@ func (d *Downloader) start(ctx context.Context) error {
 		}
 	}
 
-	recs, err := d.wal.GetAllRecords(ctx)
+	recs, err := d.clusterMonitor.GetAllRecords(ctx)
 	if err != nil {
 		_ = level.Error(d.log).Log("msg", err.Error())
 
-		if rbErr := d.wal.Unlock(ctx, false); rbErr != nil {
+		if rbErr := d.clusterMonitor.Unlock(ctx, false); rbErr != nil {
 			_ = level.Error(d.log).Log("msg", rbErr.Error())
 			return rbErr
 		}
@@ -260,15 +261,15 @@ func (d *Downloader) start(ctx context.Context) error {
 		return err
 	}
 
-	lostRec, found := lo.Find(recs, func(item *walrec.Record) bool {
-		return item.DownloaderID == d.cfg.InstanceID && item.Status == walrec.PROCESSING
+	lostRec, found := lo.Find(recs, func(item *cl_rec.Record) bool {
+		return item.DownloaderID == d.cfg.InstanceID && item.Status == cl_rec.PROCESSING
 	})
 	if found {
 		_ = level.Debug(d.log).Log("msg", "found lost download record")
 		d.currRec = lostRec
 	}
 
-	if cErr := d.wal.Unlock(ctx, true); cErr != nil {
+	if cErr := d.clusterMonitor.Unlock(ctx, true); cErr != nil {
 		_ = level.Error(d.log).Log("msg", cErr.Error())
 		return cErr
 	}
@@ -377,8 +378,8 @@ func (d *Downloader) run(ctx context.Context) error {
 		return nil
 	}
 
-	d.currRec.Status = walrec.COMPLETED
-	if err := d.wal.UpdateRecord(ctx, d.currRec); err != nil {
+	d.currRec.Status = cl_rec.COMPLETED
+	if err := d.clusterMonitor.UpdateRecord(ctx, d.currRec); err != nil {
 		_ = level.Error(d.log).Log("msg", err.Error())
 		return nil
 	}
@@ -395,7 +396,7 @@ func (d *Downloader) run(ctx context.Context) error {
 func (d *Downloader) stealWALRecord(ctx context.Context) error {
 	_ = level.Debug(d.log).Log("msg", "trying to steal wal record from unhealthy members")
 
-	recs, err := d.wal.GetRecordsByStatus(ctx, walrec.PROCESSING)
+	recs, err := d.clusterMonitor.GetRecordsByStatus(ctx, cl_rec.PROCESSING)
 	if err != nil {
 		return errors.Wrap(err, "steal wal record")
 	}
@@ -409,11 +410,11 @@ func (d *Downloader) stealWALRecord(ctx context.Context) error {
 				}
 
 				if !healthy {
-					rec, found := lo.Find(recs, func(item *walrec.Record) bool {
+					rec, found := lo.Find(recs, func(item *cl_rec.Record) bool {
 						return item.DownloaderID == dID
 					})
 					if found {
-						if err := d.wal.StealRecord(ctx, rec, d.cfg.InstanceID); err != nil {
+						if err := d.clusterMonitor.StealRecord(ctx, rec, d.cfg.InstanceID); err != nil {
 							return err
 						}
 
@@ -433,7 +434,7 @@ func (d *Downloader) leaseWALRecord(ctx context.Context) error {
 		return err
 	}
 
-	if err := d.wal.AddRecord(ctx, rec); err != nil {
+	if err := d.clusterMonitor.AddRecord(ctx, rec); err != nil {
 		return err
 	}
 	d.currRec = rec
@@ -441,14 +442,14 @@ func (d *Downloader) leaseWALRecord(ctx context.Context) error {
 	return nil
 }
 
-func (d *Downloader) getWALRecordToProcess(ctx context.Context) (*walrec.Record, error) {
+func (d *Downloader) getWALRecordToProcess(ctx context.Context) (*cl_rec.Record, error) {
 	fInfos, err := d.fiasNalogClient.GetAllDownloadFileInfo(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	if d.fileTypeDownloading == wal.FileTypeFull {
-		_, found, err := d.wal.GetFirstRecord(ctx)
+	if d.fileTypeDownloading == cluster.FileTypeFull {
+		_, found, err := d.clusterMonitor.GetFirstRecord(ctx)
 		if err != nil {
 			return nil, err
 		}
@@ -459,23 +460,23 @@ func (d *Downloader) getWALRecordToProcess(ctx context.Context) (*walrec.Record,
 					return item.GARXMLFullURL != ""
 				})
 				fInfo := fInfos[0]
-				return walrec.New(fInfo.VersionID, d.cfg.InstanceID, fInfo.GARXMLFullURL, wal.FileTypeFull), nil
+				return cl_rec.New(fInfo.VersionID, d.cfg.InstanceID, fInfo.GARXMLFullURL, cluster.FileTypeFull), nil
 			}
 
 			return nil, errors.New("no file infos available")
 		}
 	}
 
-	recs, err := d.wal.GetAllRecords(ctx)
+	recs, err := d.clusterMonitor.GetAllRecords(ctx)
 	if err != nil {
 		return nil, err
 	}
 
-	lastSentVer := lo.Max(lo.FilterMap(recs, func(item *walrec.Record, index int) (int, bool) {
-		return item.Version, item.Status == walrec.SENT
+	lastSentVer := lo.Max(lo.FilterMap(recs, func(item *cl_rec.Record, index int) (int, bool) {
+		return item.Version, item.Status == cl_rec.SENT
 	}))
 
-	avlRecs := lo.FilterMap(recs, func(item *walrec.Record, index int) (int, bool) {
+	avlRecs := lo.FilterMap(recs, func(item *cl_rec.Record, index int) (int, bool) {
 		return item.Version, item.Version > lastSentVer
 	})
 
@@ -489,7 +490,7 @@ func (d *Downloader) getWALRecordToProcess(ctx context.Context) (*walrec.Record,
 			return item.VersionID == firstAvlVer
 		})
 		if found {
-			return walrec.New(info.VersionID, d.cfg.InstanceID, info.GARXMLDeltaURL, wal.FileTypeDiff), nil
+			return cl_rec.New(info.VersionID, d.cfg.InstanceID, info.GARXMLDeltaURL, cluster.FileTypeDiff), nil
 		}
 
 		return nil, errors.New(fmt.Sprintf("cannot find download info for version: %d", firstAvlVer))
@@ -499,7 +500,7 @@ func (d *Downloader) getWALRecordToProcess(ctx context.Context) (*walrec.Record,
 }
 
 func (d *Downloader) lockWAL(ctx context.Context) error {
-	if err := d.wal.Lock(ctx); err != nil {
+	if err := d.clusterMonitor.Lock(ctx); err != nil {
 		_ = level.Error(d.log).Log("msg", err.Error())
 		return err
 	}
@@ -508,7 +509,7 @@ func (d *Downloader) lockWAL(ctx context.Context) error {
 }
 
 func (d *Downloader) unlockWALWithRollback(ctx context.Context) error {
-	if err := d.wal.Unlock(ctx, false); err != nil {
+	if err := d.clusterMonitor.Unlock(ctx, false); err != nil {
 		_ = level.Error(d.log).Log("msg", err.Error())
 		return err
 	}
@@ -517,7 +518,7 @@ func (d *Downloader) unlockWALWithRollback(ctx context.Context) error {
 }
 
 func (d *Downloader) unlockWALWithCommit(ctx context.Context) error {
-	if err := d.wal.Unlock(ctx, true); err != nil {
+	if err := d.clusterMonitor.Unlock(ctx, true); err != nil {
 		_ = level.Error(d.log).Log("msg", err.Error())
 		return err
 	}

@@ -11,7 +11,7 @@ import (
 )
 
 type Config struct {
-	Url string `yaml:"url"`
+	Url string `mapstructure:"url"`
 }
 
 func (c *Config) RegisterFlags(flagPrefix string, f *flag.FlagSet) {

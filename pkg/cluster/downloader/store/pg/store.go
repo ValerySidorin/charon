@@ -6,8 +6,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/ValerySidorin/charon/pkg/wal/config/pg"
-	"github.com/ValerySidorin/charon/pkg/wal/downloader/record"
+	"github.com/ValerySidorin/charon/pkg/cluster/config/pg"
+	"github.com/ValerySidorin/charon/pkg/cluster/downloader/record"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	pgx "github.com/jackc/pgx/v5"
@@ -25,7 +25,7 @@ type Store struct {
 	currTx pgx.Tx
 }
 
-func NewWALStore(ctx context.Context, cfg pg.Config, log log.Logger) (*Store, error) {
+func NewClusterStore(ctx context.Context, cfg pg.Config, log log.Logger) (*Store, error) {
 	store := &Store{
 		cfg: cfg,
 		log: log,

@@ -20,12 +20,12 @@ import (
 )
 
 type Config struct {
-	Target          flagext.StringSliceCSV `yaml:"target"`
-	ApplicationName string                 `yaml:"-"`
+	Target          flagext.StringSliceCSV `mapstructure:"target"`
+	ApplicationName string                 `mapstructure:"-"`
 
-	Downloader downloader.Config `yaml:"downloader"`
-	Processor  processor.Config  `yaml:"processor"`
-	Log        util_log.Config   `yaml:"log"`
+	Downloader downloader.Config `mapstructure:"downloader"`
+	Processor  processor.Config  `mapstructure:"processor"`
+	Log        util_log.Config   `mapstructure:"log"`
 }
 
 func (c *Config) RegisterFlags(f *flag.FlagSet, log log.Logger) {

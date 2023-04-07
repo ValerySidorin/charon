@@ -3,17 +3,17 @@ package config
 import (
 	"flag"
 
-	"github.com/ValerySidorin/charon/pkg/wal/config/pg"
+	"github.com/ValerySidorin/charon/pkg/cluster/config/pg"
 )
 
 type Config struct {
-	Name        string `yaml:"name"`
-	Store       string `yaml:"store"`
-	StoreConfig `yaml:",inline"`
+	Name        string `mapstructure:"name"`
+	Store       string `mapstructure:"store"`
+	StoreConfig `mapstructure:",squash"`
 }
 
 type StoreConfig struct {
-	Pg pg.Config `yaml:"pg"`
+	Pg pg.Config `mapstructure:"pg"`
 }
 
 func (c *Config) RegisterFlags(flagPrefix string, f *flag.FlagSet) {

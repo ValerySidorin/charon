@@ -10,8 +10,8 @@ import (
 )
 
 type Config struct {
-	Type string      `yaml:"type"`
-	Nats nats.Config `yaml:"nats"`
+	Type string      `mapstructure:"type"`
+	Nats nats.Config `mapstructure:"nats"`
 }
 
 func (c *Config) RegisterFlags(flagPrefix string, f *flag.FlagSet) {

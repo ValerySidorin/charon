@@ -9,10 +9,10 @@ Downloader is presented as a simple timer service, which polling interval is con
 The Processor accepts message from Downloader (or Downloaders), and processes each XML file in a recently downloaded ZIP. It can also be replicated, thanks to all the mechanisms, explained above in the Downloader section. Import process must be defined as a plugin, because currently Charon is not providing any, other then a mock. This will definitely change in future, the default plugin must exist anyway.
 
 ## How replicated instances are not conflicting with each other?
-### Hash Ring
-Hash rings in Charon are used to share work across several replicas of a component in a consistent way, so that any other component can decide what job needs to be done right now. A simple key-value storage can be used for this. Consul, Etcd, Memberlist are supported.
-### Shared WAL
-Shared WAL is just a table in database (currently Postgres), that contains records about all he jobs in cluster, that are being processed right now, or have already been processed in the past. Shared WAL can be locked by any instance to prevent data duplication and task intersection. Each component has its own WAL, shared between component's instances in cluster. Only Postgres is supported as WAL provider right now.
+### Ring
+Rings in Charon are used to share work across several replicas of a component in a consistent way, so that any other component can decide what job needs to be done right now. A simple key-value storage can be used for this. Consul, Etcd, Memberlist are supported.
+### Cluster monitoring
+Cluster monitor storage is just a table in database, that contains records about all he jobs in cluster, that are being processed right now, or have already been processed in the past. Cluster monitor storage can be locked by any instance to prevent data duplication and task intersection. Each component has its own cluster monitor storage, shared between component's instances in cluster. Only Postgres is supported as cluster monitor storage provider right now.
 ### Summary
 Each instance enters lifetime ring on start. That's how it knows about all the members in cluster. Also, each instance in cluster connects to a shared WAL, in which it saves state and reports about processing and finished job. Instance can steal another members' job only if this member becomes unhealthy in the ring.
 ### Communication

@@ -5,7 +5,7 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/ValerySidorin/charon/pkg/wal"
+	"github.com/ValerySidorin/charon/pkg/cluster"
 	"github.com/pkg/errors"
 )
 
@@ -25,7 +25,7 @@ func NewMessage(raw string) (*Message, error) {
 		return nil, errors.Wrap(err, "invalid message raw input (version)")
 	}
 
-	if tokens[1] != wal.FileTypeDiff && tokens[1] != wal.FileTypeFull {
+	if tokens[1] != cluster.FileTypeDiff && tokens[1] != cluster.FileTypeFull {
 		return nil, errors.New("invalid message raw input (type)")
 	}
 

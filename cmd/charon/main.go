@@ -1,20 +1,19 @@
 package main
 
 import (
-	"bytes"
 	"flag"
 	"fmt"
 	"io"
 	"os"
+	"path"
 	"strings"
 
 	"github.com/ValerySidorin/charon/pkg/charon"
 	util_log "github.com/ValerySidorin/charon/pkg/util/log"
 	"github.com/go-kit/log/level"
 	"github.com/grafana/dskit/flagext"
-	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
-	"gopkg.in/yaml.v3"
+	"github.com/spf13/viper"
 )
 
 const (
@@ -28,19 +27,30 @@ func main() {
 		os.Exit(0)
 	}
 
-	var cfg charon.Config
+	cfg := charon.Config{}
 
-	conf, expandEnv := parseConfigFileParameter(os.Args[1:])
+	conf := parseConfigFileParameter(os.Args[1:])
 
 	cfg.RegisterFlags(flag.CommandLine, util_log.Logger)
 
-	if err := LoadConfig(conf, expandEnv, &cfg); err != nil {
+	if err := LoadConfig(conf, &cfg); err != nil {
 		fmt.Fprintf(os.Stderr, "error loading config from: %s: %v\n", conf, err)
 		os.Exit(1)
 	}
 
+	flag.CommandLine.VisitAll(func(f *flag.Flag) {
+		env := strings.ToUpper(f.Name)
+		env = strings.Replace(env, ".", "_", -1)
+		env = strings.Replace(env, "-", "_", -1)
+		env = "CHARON_" + env
+
+		val := os.Getenv(env)
+		if val != "" {
+			_ = flag.CommandLine.Lookup(f.Name).Value.Set(val)
+		}
+	})
+
 	flagext.IgnoredFlag(flag.CommandLine, configFileOption, "Configuration file to load.")
-	_ = flag.CommandLine.Bool(configExpandEnvOption, false, "Expands ${var} or $var in config according to the values of the environment variables.")
 
 	flag.CommandLine.Usage = func() {}
 	flag.CommandLine.Init(flag.CommandLine.Name(), flag.ContinueOnError)
@@ -61,12 +71,11 @@ func main() {
 	util_log.CheckFatal("running application", err)
 }
 
-func parseConfigFileParameter(args []string) (configFile string, configExpandEnv bool) {
+func parseConfigFileParameter(args []string) (configFile string) {
 	fs := flag.NewFlagSet("", flag.ContinueOnError)
 	fs.SetOutput(io.Discard)
 
 	fs.StringVar(&configFile, configFileOption, "", "")
-	fs.BoolVar(&configExpandEnv, configExpandEnvOption, false, "")
 
 	for len(args) > 0 {
 		_ = fs.Parse(args)
@@ -76,35 +85,34 @@ func parseConfigFileParameter(args []string) (configFile string, configExpandEnv
 	return
 }
 
-func LoadConfig(filename string, expandEnv bool, cfg *charon.Config) error {
-	buf, err := os.ReadFile(filename)
-	if err != nil {
-		return errors.Wrap(err, "Error reading config file")
+func LoadConfig(filename string, cfg *charon.Config) error {
+	v := viper.New()
+
+	if filename == "" {
+		v.SetConfigName("config")
+		v.SetConfigType("yaml")
+		v.AddConfigPath(".")
+		v.AddConfigPath("conf/")
+	} else {
+		var base = path.Base(filename)
+		var ext = path.Ext(base)
+		var name = strings.TrimSuffix(base, ext)
+		v.SetConfigName(name)
+		v.SetConfigType(ext[1:])
+		v.AddConfigPath(strings.TrimSuffix(filename, base))
 	}
 
-	if expandEnv {
-		buf = expandEnvironmentVariables(buf)
+	if err := v.ReadInConfig(); err != nil {
+		if _, ok := err.(viper.ConfigFileNotFoundError); ok {
+			fmt.Fprintln(os.Stdout, "Config file not found, only env and flag values will be presented.")
+			return nil
+		} else {
+			return err
+		}
 	}
-
-	dec := yaml.NewDecoder(bytes.NewReader(buf))
-	dec.KnownFields(true)
-
-	if err := dec.Decode(cfg); err != nil {
-		return errors.Wrap(err, "Error parsing config file")
+	if err := v.Unmarshal(&cfg); err != nil {
+		return err
 	}
 
 	return nil
-}
-
-func expandEnvironmentVariables(config []byte) []byte {
-	return []byte(os.Expand(string(config), func(key string) string {
-		keyAndDefault := strings.SplitN(key, ":", 2)
-		key = keyAndDefault[0]
-
-		v := os.Getenv(key)
-		if v == "" && len(keyAndDefault) == 2 {
-			v = keyAndDefault[1]
-		}
-		return v
-	}))
 }

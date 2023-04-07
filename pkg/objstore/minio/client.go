@@ -21,10 +21,10 @@ const (
 )
 
 type Config struct {
-	Endpoint          string `yaml:"endpoint"`
-	MinioRootUser     string `yaml:"minio_root_user"`
-	MinioRootPassword string `yaml:"minio_root_password"`
-	Secure            bool   `yaml:"secure"`
+	Endpoint          string `mapstructure:"endpoint"`
+	MinioRootUser     string `mapstructure:"minio_root_user"`
+	MinioRootPassword string `mapstructure:"minio_root_password"`
+	Secure            bool   `mapstructure:"secure"`
 }
 
 func (c *Config) RegisterFlags(flagPrefix string, f *flag.FlagSet) {
