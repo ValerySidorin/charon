@@ -144,3 +144,16 @@ func (c *MinioReader) ListVersionsWithTypes(ctx context.Context) ([]string, erro
 
 	return keys, nil
 }
+
+func (c *MinioReader) Delete(ctx context.Context, version int) error {
+	for obj := range c.client.ListObjects(ctx, c.bucket, minio.ListObjectsOptions{
+		Prefix:    fmt.Sprintf("%d/", version),
+		Recursive: true,
+	}) {
+		if err := c.client.RemoveObject(ctx, c.bucket, obj.Key, minio.RemoveObjectOptions{}); err != nil {
+			return errors.Wrap(err, "minio reader: delete object")
+		}
+	}
+
+	return nil
+}

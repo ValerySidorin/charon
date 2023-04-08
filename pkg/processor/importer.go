@@ -225,6 +225,12 @@ func (i *importer) handle(ctx context.Context) error {
 			time.Sleep(time.Second)
 			continue
 		}
+
+		if loopErr = i.objStore.Delete(ctx, ver); err != nil {
+			_ = level.Error(i.log).Log("msg", loopErr.Error())
+			time.Sleep(time.Second)
+			continue
+		}
 	}
 
 	return loopErr

@@ -31,6 +31,7 @@ type Reader interface {
 	Retrieve(ctx context.Context, objName string) (io.ReadCloser, error)
 	RetrieveObjNamesByVersion(ctx context.Context, version int, typ string) ([]string, error)
 	ListVersionsWithTypes(ctx context.Context) ([]string, error)
+	Delete(ctx context.Context, version int) error
 }
 
 func NewReader(cfg Config, bucket string) (Reader, error) {
