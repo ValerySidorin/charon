@@ -15,23 +15,31 @@ var (
 )
 
 type Config struct {
-	LogFormat logging.Format    `yaml:"log_format"`
-	LogLevel  logging.Level     `yaml:"log_level"`
-	Log       logging.Interface `yaml:"-"`
+	LogFormat string            `mapstructure:"log_format"`
+	LogLevel  string            `mapstructure:"log_level"`
+	Log       logging.Interface `mapstructure:"-"`
 }
 
 func (c *Config) RegisterFlags(f *flag.FlagSet) {
-	c.LogFormat.RegisterFlags(f)
-	c.LogLevel.RegisterFlags(f)
+	f.StringVar(&c.LogFormat, "log.format", "logfmt", "Output log messages in the given format. Valid formats: [logfmt, json]")
+	f.StringVar(&c.LogLevel, "log.level", "info", "Only log messages with the given severity or above. Valid levels: [debug, info, warn, error]")
 }
 
+// Log config with properties, that are used by logger.
+
 func InitLogger(cfg *Config) {
-	l := newBasicLogger(cfg.LogLevel, cfg.LogFormat)
+	logFormat := logging.Format{}
+	logLevel := logging.Level{}
+
+	logFormat.Set(cfg.LogFormat)
+	logLevel.Set(cfg.LogLevel)
+
+	l := newBasicLogger(logLevel, logFormat)
 
 	logger := log.With(l, "caller", log.Caller(5))
-	Logger = level.NewFilter(logger, cfg.LogLevel.Gokit)
+	Logger = level.NewFilter(logger, logLevel.Gokit)
 
-	cfg.Log = logging.GoKit(level.NewFilter(log.With(l, "caller", log.Caller(6)), cfg.LogLevel.Gokit))
+	cfg.Log = logging.GoKit(level.NewFilter(log.With(l, "caller", log.Caller(6)), logLevel.Gokit))
 }
 
 func newBasicLogger(l logging.Level, format logging.Format) log.Logger {

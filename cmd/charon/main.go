@@ -22,11 +22,6 @@ const (
 )
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprint(os.Stdout, "Charon is a horizontally scalable, fault tolerant, plugin-driven GAR (prev. FIAS) data processor.")
-		os.Exit(0)
-	}
-
 	cfg := charon.Config{}
 
 	conf := parseConfigFileParameter(os.Args[1:])
