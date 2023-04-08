@@ -57,7 +57,7 @@ func (p *persister) enqueue(msg *message.Message) {
 }
 
 func (p *persister) start(ctx context.Context, callback func()) {
-	callback()
+	go callback()
 
 	for msg := range p.msgCh {
 
@@ -122,7 +122,7 @@ func (p *persister) start(ctx context.Context, callback func()) {
 		}
 
 		if processed {
-			callback()
+			go callback()
 		}
 	}
 }

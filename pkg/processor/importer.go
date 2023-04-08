@@ -61,7 +61,7 @@ func newImporter(ctx context.Context, ring *ring.Ring, lifecycler *ring.BasicLif
 	}, nil
 }
 
-func (i *importer) notify(ctx context.Context) {
+func (i *importer) start(ctx context.Context) {
 	if !i.executing.Load() {
 		i.executing.Store(true)
 

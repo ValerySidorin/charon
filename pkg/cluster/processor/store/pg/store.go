@@ -46,7 +46,7 @@ func NewClusterStore(ctx context.Context, name string, cfg pg.Config, log log.Lo
 		obj_name text not null, 
 		type text not null, 
 		status text not null,
-		constraint unique_obj_name unique (obj_name));`, name)
+		constraint unique_obj_name_%s unique (obj_name));`, name, name)
 	if _, err := store.pool.Exec(ctx, q); err != nil {
 		store.pool.Close()
 		return nil, errors.Wrap(err, "postgres: init table")

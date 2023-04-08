@@ -208,13 +208,15 @@ func (p *Processor) start(ctx context.Context) error {
 	}
 
 	go p.persister.start(ctx, func() {
-		p.importer.notify(ctx)
+		p.importer.start(ctx)
 	})
 
 	return nil
 }
 
 func (p *Processor) stop(err error) error {
-	_ = level.Error(p.log).Log("msg", err.Error())
+	if err != nil {
+		_ = level.Error(p.log).Log("msg", err.Error())
+	}
 	return nil
 }

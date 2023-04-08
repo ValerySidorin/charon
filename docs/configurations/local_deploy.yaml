@@ -58,7 +58,7 @@ processor:
       minio_root_user: charon
       minio_root_password: charonpwd
   cluster:
-    name: processor_wal
+    name: processor_cluster
     store: pg
     pg:
       conn: "postgres://charon:charonpwd@localhost:5432/charon"
