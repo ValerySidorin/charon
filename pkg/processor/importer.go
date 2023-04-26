@@ -9,7 +9,6 @@ import (
 	"github.com/ValerySidorin/charon/pkg/cluster/processor/record"
 	"github.com/ValerySidorin/charon/pkg/objstore"
 	"github.com/ValerySidorin/charon/pkg/processor/plugin"
-	"github.com/ValerySidorin/charon/pkg/util"
 	"github.com/go-kit/log"
 	"github.com/go-kit/log/level"
 	"github.com/grafana/dskit/ring"
@@ -29,11 +28,10 @@ type importer struct {
 
 	processorsRing        *ring.Ring
 	processorsLifecycler  *ring.BasicLifecycler
-	instanceMap           *util.ConcurrentInstanceMap
 	healthyInstancesCount *atomic.Uint32
 }
 
-func newImporter(ctx context.Context, ring *ring.Ring, lifecycler *ring.BasicLifecycler, instanceMap *util.ConcurrentInstanceMap, healthyCnt *atomic.Uint32, cfg Config, log log.Logger) (*importer, error) {
+func newImporter(ctx context.Context, ring *ring.Ring, lifecycler *ring.BasicLifecycler, healthyCnt *atomic.Uint32, cfg Config, log log.Logger) (*importer, error) {
 	reader, err := objstore.NewReader(cfg.ObjStore, objstore.Bucket)
 	if err != nil {
 		return nil, errors.Wrap(err, "importer: connect to diff store")
@@ -54,7 +52,6 @@ func newImporter(ctx context.Context, ring *ring.Ring, lifecycler *ring.BasicLif
 		processorsRing:       ring,
 		processorsLifecycler: lifecycler,
 
-		instanceMap:           instanceMap,
 		healthyInstancesCount: healthyCnt,
 
 		executing: atomic.NewBool(false),
@@ -146,20 +143,17 @@ func (i *importer) handle(ctx context.Context) error {
 						for _, rec := range batch.Records {
 							r := rec
 							if rec.ProcessorID != "" && rec.ProcessorID != i.cfg.InstanceID {
-								_, ok := i.instanceMap.Get(rec.ProcessorID)
-								if ok {
-									healthy, loopErr := i.processorIsHealthy(rec.ProcessorID)
-									if loopErr != nil {
-										_ = level.Error(i.log).Log("msg", loopErr.Error())
-										return loopErr
-									}
+								healthy, loopErr := i.processorIsHealthy(rec.ProcessorID)
+								if loopErr != nil {
+									_ = level.Error(i.log).Log("msg", loopErr.Error())
+									return loopErr
+								}
 
-									if !healthy {
-										fRec = r
-										fRec.ProcessorID = i.cfg.InstanceID
-										fRec.Status = record.PROCESSING
-										break
-									}
+								if !healthy {
+									fRec = r
+									fRec.ProcessorID = i.cfg.InstanceID
+									fRec.Status = record.PROCESSING
+									break
 								}
 								continue
 							}
@@ -204,7 +198,7 @@ func (i *importer) handle(ctx context.Context) error {
 			defer obj.Close()
 
 			_ = level.Debug(i.log).Log("msg", fmt.Sprintf("start processing: %s", fRec.ObjName))
-			if err := plug.Exec(ctx, fRec, obj); err != nil {
+			if loopErr = plug.Exec(ctx, fRec, obj); loopErr != nil {
 				_ = level.Error(i.log).Log("msg", fmt.Sprintf("error loading %s: %s", fRec.ObjName, err.Error()))
 				continue
 			}

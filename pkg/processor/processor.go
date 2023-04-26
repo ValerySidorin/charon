@@ -61,7 +61,6 @@ type Processor struct {
 	log gklog.Logger
 
 	// Lifetime services
-	instanceMap           *util.ConcurrentInstanceMap
 	healthyInstancesCount *atomic.Uint32
 	subservices           *services.Manager
 
@@ -101,7 +100,6 @@ func New(ctx context.Context, cfg Config, reg prometheus.Registerer, log gklog.L
 		cfg: cfg,
 		log: log,
 
-		instanceMap:           util.NewConcurrentInstanceMap(),
 		healthyInstancesCount: atomic.NewUint32(0),
 
 		objStore:       reader,
@@ -113,7 +111,7 @@ func New(ctx context.Context, cfg Config, reg prometheus.Registerer, log gklog.L
 	p.Service = services.NewIdleService(p.start, p.stop)
 
 	processorsRing, processorsLifecycler, err := newRingAndLifecycler(
-		cfg.ProcessorsRing, p.healthyInstancesCount, p.instanceMap, log, reg)
+		cfg.ProcessorsRing, p.healthyInstancesCount, log, reg)
 	if err != nil {
 		return nil, err
 	}
@@ -125,7 +123,7 @@ func New(ctx context.Context, cfg Config, reg prometheus.Registerer, log gklog.L
 
 	p.subservices = manager
 
-	importer, err := newImporter(ctx, processorsRing, processorsLifecycler, p.instanceMap, p.healthyInstancesCount, cfg, log)
+	importer, err := newImporter(ctx, processorsRing, processorsLifecycler, p.healthyInstancesCount, cfg, log)
 	if err != nil {
 		return nil, errors.Wrap(err, "processor: init importer")
 	}
@@ -135,7 +133,7 @@ func New(ctx context.Context, cfg Config, reg prometheus.Registerer, log gklog.L
 	return &p, nil
 }
 
-func newRingAndLifecycler(ringCfg ProcessorRingConfig, instanceCount *atomic.Uint32, instances *util.ConcurrentInstanceMap, logger gklog.Logger, reg prometheus.Registerer) (*ring.Ring, *ring.BasicLifecycler, error) {
+func newRingAndLifecycler(ringCfg ProcessorRingConfig, instanceCount *atomic.Uint32, logger gklog.Logger, reg prometheus.Registerer) (*ring.Ring, *ring.BasicLifecycler, error) {
 	reg = prometheus.WrapRegistererWithPrefix("charon_", reg)
 	rCfg := ringCfg.toRingConfig()
 	kvStore, err := kv.NewClient(rCfg.KVStore, ring.GetCodec(), kv.RegistererWithKVName(reg, "processor-lifecycler"), logger)
@@ -151,7 +149,6 @@ func newRingAndLifecycler(ringCfg ProcessorRingConfig, instanceCount *atomic.Uin
 	var delegate ring.BasicLifecyclerDelegate
 	delegate = ring.NewInstanceRegisterDelegate(ring.ACTIVE, lifecyclerCfg.NumTokens)
 	delegate = util.NewHealthyInstanceDelegate(instanceCount, lifecyclerCfg.HeartbeatTimeout, delegate)
-	delegate = util.NewInstanceListDelegate(instances, delegate)
 	delegate = ring.NewLeaveOnStoppingDelegate(delegate, logger)
 	delegate = util.NewAutoMarkUnhealthyDelegate(ringAutoMarkUnhealthyPeriods*lifecyclerCfg.HeartbeatTimeout, delegate, logger)
 

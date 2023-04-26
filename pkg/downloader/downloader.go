@@ -45,7 +45,6 @@ type Downloader struct {
 	//Lifetime services
 	downloadersLifecycler *ring.BasicLifecycler
 	downloadersRing       *ring.Ring
-	instanceMap           *util.ConcurrentInstanceMap
 	healthyInstancesCount *atomic.Uint32
 	subservices           *services.Manager
 
@@ -131,7 +130,6 @@ func New(ctx context.Context, cfg Config, reg prometheus.Registerer, log gklog.L
 		fiasNalogClient:       fiasnalog.NewClient(cfg.RetryMax, cfg.Timeout),
 		manager:               manager.New(cfg.BufferSize, log),
 		healthyInstancesCount: atomic.NewUint32(0),
-		instanceMap:           util.NewConcurrentInstanceMap(),
 		clusterMonitor:        monitor,
 		fileTypeDownloading:   cfg.StartFrom.FileType,
 	}
@@ -145,7 +143,7 @@ func New(ctx context.Context, cfg Config, reg prometheus.Registerer, log gklog.L
 	}
 
 	downloadersRing, downloadersLifecycler, err := newRingAndLifecycler(
-		cfg.DownloadersRing, d.healthyInstancesCount, d.instanceMap, log, reg)
+		cfg.DownloadersRing, d.healthyInstancesCount, log, reg)
 	if err != nil {
 		return nil, err
 	}
@@ -163,7 +161,7 @@ func New(ctx context.Context, cfg Config, reg prometheus.Registerer, log gklog.L
 	return d, nil
 }
 
-func newRingAndLifecycler(ringCfg DownloaderRingConfig, instanceCount *atomic.Uint32, instances *util.ConcurrentInstanceMap, logger gklog.Logger, reg prometheus.Registerer) (*ring.Ring, *ring.BasicLifecycler, error) {
+func newRingAndLifecycler(ringCfg DownloaderRingConfig, instanceCount *atomic.Uint32, logger gklog.Logger, reg prometheus.Registerer) (*ring.Ring, *ring.BasicLifecycler, error) {
 	reg = prometheus.WrapRegistererWithPrefix("charon_", reg)
 	rCfg := ringCfg.toRingConfig()
 	kvStore, err := kv.NewClient(rCfg.KVStore, ring.GetCodec(), kv.RegistererWithKVName(reg, "downloader-lifecycler"), logger)
@@ -179,7 +177,6 @@ func newRingAndLifecycler(ringCfg DownloaderRingConfig, instanceCount *atomic.Ui
 	var delegate ring.BasicLifecyclerDelegate
 	delegate = ring.NewInstanceRegisterDelegate(ring.ACTIVE, lifecyclerCfg.NumTokens)
 	delegate = util.NewHealthyInstanceDelegate(instanceCount, lifecyclerCfg.HeartbeatTimeout, delegate)
-	delegate = util.NewInstanceListDelegate(instances, delegate)
 	delegate = ring.NewLeaveOnStoppingDelegate(delegate, logger)
 	delegate = util.NewAutoMarkUnhealthyDelegate(ringAutoMarkUnhealthyPeriods*lifecyclerCfg.HeartbeatTimeout, delegate, logger)
 
@@ -400,27 +397,20 @@ func (d *Downloader) stealWALRecord(ctx context.Context) error {
 	if err != nil {
 		return errors.Wrap(err, "steal wal record")
 	}
-	for _, dID := range d.instanceMap.Keys() {
-		if dID != d.cfg.InstanceID {
-			_, ok := d.instanceMap.Get(dID)
-			if ok {
-				healthy, err := d.IsHealthy(dID)
-				if err != nil {
+
+	for _, rec := range recs {
+		if rec.DownloaderID != d.cfg.InstanceID {
+			healthy, err := d.IsHealthy(rec.DownloaderID)
+			if err != nil {
+				return err
+			}
+
+			if !healthy {
+				if err := d.clusterMonitor.StealRecord(ctx, rec, d.cfg.InstanceID); err != nil {
 					return err
 				}
 
-				if !healthy {
-					rec, found := lo.Find(recs, func(item *cl_rec.Record) bool {
-						return item.DownloaderID == dID
-					})
-					if found {
-						if err := d.clusterMonitor.StealRecord(ctx, rec, d.cfg.InstanceID); err != nil {
-							return err
-						}
-
-						d.currRec = rec
-					}
-				}
+				d.currRec = rec
 			}
 		}
 	}

@@ -133,6 +133,9 @@ func (c *MinioReader) ListVersionsWithTypes(ctx context.Context) ([]string, erro
 	for obj := range c.client.ListObjects(ctx, c.bucket, minio.ListObjectsOptions{
 		Recursive: true,
 	}) {
+		if obj.Key == "" {
+			return keys, nil
+		}
 		tokens := strings.Split(obj.Key, Delimiter)
 		if len(tokens) != 2 {
 			return nil, errors.New("invalid object")
