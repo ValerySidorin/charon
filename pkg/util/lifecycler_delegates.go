@@ -1,7 +1,6 @@
 package util
 
 import (
-	"sync"
 	"time"
 
 	"github.com/go-kit/log"
@@ -44,74 +43,6 @@ func (d *HealthyInstanceDelegate) OnRingInstanceHeartbeat(lifecycler *ring.Basic
 	}
 
 	d.count.Store(activeMembers)
-	d.next.OnRingInstanceHeartbeat(lifecycler, ringDesc, instanceDesc)
-}
-
-// Instance list delegate stuff
-type ConcurrentInstanceMap struct {
-	sync.Mutex
-	instances map[string]ring.InstanceDesc
-}
-
-func NewConcurrentInstanceMap() *ConcurrentInstanceMap {
-	return &ConcurrentInstanceMap{
-		instances: make(map[string]ring.InstanceDesc),
-	}
-}
-
-func (m *ConcurrentInstanceMap) Get(instanceID string) (ring.InstanceDesc, bool) {
-	v, ok := m.instances[instanceID]
-	return v, ok
-}
-
-func (m *ConcurrentInstanceMap) Set(ringInstances map[string]ring.InstanceDesc) {
-	m.Lock()
-	defer m.Unlock()
-
-	for k := range m.instances {
-		delete(m.instances, k)
-	}
-
-	for k, v := range ringInstances {
-		m.instances[k] = v
-	}
-}
-
-func (m *ConcurrentInstanceMap) Keys() []string {
-	keys := make([]string, 0)
-	m.Lock()
-	defer m.Unlock()
-
-	for k := range m.instances {
-		keys = append(keys, k)
-	}
-
-	return keys
-}
-
-type InstanceListDelegate struct {
-	instances *ConcurrentInstanceMap
-	next      ring.BasicLifecyclerDelegate
-}
-
-func NewInstanceListDelegate(m *ConcurrentInstanceMap, next ring.BasicLifecyclerDelegate) *InstanceListDelegate {
-	return &InstanceListDelegate{instances: m, next: next}
-}
-
-func (d *InstanceListDelegate) OnRingInstanceRegister(lifecycler *ring.BasicLifecycler, ringDesc ring.Desc, instanceExists bool, instanceID string, instanceDesc ring.InstanceDesc) (ring.InstanceState, ring.Tokens) {
-	return d.next.OnRingInstanceRegister(lifecycler, ringDesc, instanceExists, instanceID, instanceDesc)
-}
-
-func (d *InstanceListDelegate) OnRingInstanceTokens(lifecycler *ring.BasicLifecycler, tokens ring.Tokens) {
-	d.next.OnRingInstanceTokens(lifecycler, tokens)
-}
-
-func (d *InstanceListDelegate) OnRingInstanceStopping(lifecycler *ring.BasicLifecycler) {
-	d.next.OnRingInstanceStopping(lifecycler)
-}
-
-func (d *InstanceListDelegate) OnRingInstanceHeartbeat(lifecycler *ring.BasicLifecycler, ringDesc *ring.Desc, instanceDesc *ring.InstanceDesc) {
-	d.instances.Set(ringDesc.Ingesters)
 	d.next.OnRingInstanceHeartbeat(lifecycler, ringDesc, instanceDesc)
 }
 
